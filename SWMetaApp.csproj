@@ -35,12 +35,6 @@
       <Isolated>false</Isolated>
       <EmbedInteropTypes>true</EmbedInteropTypes>
     </COMReference>
-    <COMReference Include="{83a33d31-27c5-11ce-bfd4-00400513bb57}">
-      <WrapperTool>tlbimp</WrapperTool>
-      <VersionMinor>0</VersionMinor>
-      <VersionMajor>1</VersionMajor>
-      <Guid>83a33d31-27c5-11ce-bfd4-00400513bb57</Guid>
-    </COMReference>
   </ItemGroup>
 
   <ItemGroup>
