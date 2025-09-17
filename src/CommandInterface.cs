@@ -4,37 +4,9 @@ using System.Linq;
 using SolidWorks.Interop.sldworks;
 using SolidWorks.Interop.swconst;
 
-public class MainClass
+public static class CommandInterface
 {
-    public static void Main(string[] args)
-    {
-        Console.WriteLine("SolidWorks Metadata Reader");
-        Console.WriteLine("==========================");
-        Console.WriteLine("Enter file paths to read metadata, or type 'exit' to quit.\n");
-
-        SldWorks swApp = null;
-        try
-        {
-            Console.WriteLine("Initializing SolidWorks connection...");
-            swApp = SolidWorksMetadataReader.CreateSolidWorksInstance();
-            swApp.Visible = false;
-            Console.WriteLine("SolidWorks connection established\n");
-
-            RunInteractiveLoop(swApp);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Fatal error: {ex.Message}");
-        }
-        finally
-        {
-            SolidWorksMetadataReader.CleanupSolidWorks(swApp);
-            Console.WriteLine("\nApplication closed. Press any key to exit...");
-            Console.ReadKey();
-        }
-    }
-
-    private static void RunInteractiveLoop(SldWorks swApp)
+    public static void RunInteractiveLoop(SldWorks swApp)
     {
         while (true)
         {
@@ -53,11 +25,9 @@ public class MainClass
                 break;
             }
 
-
-
             try
             {
-                var metadata = SolidWorksMetadataReader.ReadMetadata(swApp, input);
+                var metadata = SWMetadataReader.ReadMetadata(swApp, input);
                 DisplayMetadata(input, metadata);
                 
                 // Check if this is an assembly and offer BOM option
@@ -78,7 +48,7 @@ public class MainClass
         }
     }
 
-    private static void DisplayMetadata(string filePath, Dictionary<string, string> metadata)
+    public static void DisplayMetadata(string filePath, Dictionary<string, string> metadata)
     {
         Console.WriteLine($"\n--- Metadata for: {System.IO.Path.GetFileName(filePath)} ---");
 
@@ -165,7 +135,14 @@ public class MainClass
         }
     }
 
-    private static void OfferBomOption(SldWorks swApp, string filePath)
+    private static bool IsStandardProperty(string key)
+    {
+        var standardProps = new[] { "FileName", "FilePath", "DocumentType", "FileSize", "LastModified",
+                                   "Title", "Author", "Subject", "Comments", "Keywords" };
+        return Array.IndexOf(standardProps, key) >= 0;
+    }
+
+    public static void OfferBomOption(SldWorks swApp, string filePath)
     {
         try
         {
@@ -189,7 +166,7 @@ public class MainClass
         }
     }
 
-    private static void DisplayBom(SldWorks swApp, string filePath, bool includeSupressed)
+    public static void DisplayBom(SldWorks swApp, string filePath, bool includeSupressed)
     {
         try
         {
@@ -197,7 +174,7 @@ public class MainClass
             ModelDoc2? swModel = null;
             int errors = 0, warnings = 0;
             
-            swDocumentTypes_e docType = SolidWorksMetadataReader.GetDocumentType(filePath);
+            swDocumentTypes_e docType = SWMetadataReader.GetDocumentType(filePath);
             swModel = swApp.OpenDoc6(filePath, (int)docType,
                 (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings);
 
@@ -212,12 +189,12 @@ public class MainClass
 
             if (includeSupressed)
             {
-                bomItems = AssemblyTraverser.GetAllComponents(swModel, true);
+                bomItems = SWAssemblyTraverser.GetAllComponents(swModel, true);
                 title = "Complete Component List (Including Suppressed)";
             }
             else
             {
-                bomItems = AssemblyTraverser.GetUnsuppressedComponents(swModel, true);
+                bomItems = SWAssemblyTraverser.GetUnsuppressedComponents(swModel, true);
                 title = "Bill of Materials (Unsuppressed Components Only)";
             }
 
@@ -254,12 +231,5 @@ public class MainClass
         {
             Console.WriteLine($"Error generating BOM: {ex.Message}");
         }
-    }
-
-    private static bool IsStandardProperty(string key)
-    {
-        var standardProps = new[] { "FileName", "FilePath", "DocumentType", "FileSize", "LastModified",
-                                   "Title", "Author", "Subject", "Comments", "Keywords" };
-        return Array.IndexOf(standardProps, key) >= 0;
     }
 }

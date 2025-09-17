@@ -2,7 +2,7 @@
 using SolidWorks.Interop.sldworks;
 using SolidWorks.Interop.swconst;
 
-public static class SolidWorksMetadataReader
+public static class SWMetadataReader
 {
     private static readonly string[] ValidExtensions = { ".sldprt", ".sldasm", ".slddrw" };
 
