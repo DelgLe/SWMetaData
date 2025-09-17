@@ -20,13 +20,17 @@ public static class SolidWorksMetadataReader
         try
         {
             // Open document
+            Console.WriteLine("Reading input...");
             swModel = OpenDocument(swApp, filePath);
+
 
             // Read all metadata
             ReadCustomProperties(swModel, metadata);
             ReadSummaryInfo(swModel, metadata);
             AddFileInfo(swModel, metadata, filePath);
             ReadConfigurations(swModel, metadata);
+            ReadMaterialInfo(swModel, metadata);
+            ReadComponentInfo(swModel, metadata);
         }
         catch (COMException comEx)
         {
@@ -48,31 +52,50 @@ public static class SolidWorksMetadataReader
     {
         try
         {
-            var configMgr = swModel.ConfigurationManager;
-            if (configMgr == null) return;
-
-            var configsObj = configMgr.GetType().InvokeMember("Configurations", System.Reflection.BindingFlags.GetProperty, null, configMgr, null);
-            if (configsObj is System.Collections.IEnumerable configsEnum)
+            string[] configNames = (string[])swModel.GetConfigurationNames();
+            if (configNames != null && configNames.Length > 0)
             {
-                var configNames = new List<string>();
-                foreach (object configObj in configsEnum)
-                {
-                    if (configObj is SolidWorks.Interop.sldworks.Configuration config)
-                    {
-                        string name = config.Name;
-                        if (!string.IsNullOrEmpty(name))
-                            configNames.Add(name);
-                    }
-                }
-                if (configNames.Count > 0)
-                {
-                    metadata["Configurations"] = string.Join(", ", configNames);
-                }
+                metadata["Configurations"] = string.Join(", ", configNames);
             }
         }
         catch (Exception)
         {
             // Ignore configuration errors
+        }
+    }
+
+    private static void ReadMaterialInfo(ModelDoc2 swModel, Dictionary<string, string> metadata)
+    {
+        try
+        {
+            // Get material name for parts
+            string materialName = swModel.MaterialIdName;
+            if (!string.IsNullOrWhiteSpace(materialName))
+            {
+                metadata["Material"] = materialName;
+            }
+        }
+        catch (Exception)
+        {
+            // Ignore material errors
+        }
+    }
+
+    private static void ReadComponentInfo(ModelDoc2 swModel, Dictionary<string, string> metadata)
+    {
+        try
+        {
+            // Get component count for assemblies
+            if (swModel.GetType() == (int)swDocumentTypes_e.swDocASSEMBLY)
+            {
+                AssemblyDoc swAssembly = (AssemblyDoc)swModel;
+                int componentCount = swAssembly.GetComponentCount(false);
+                metadata["ComponentCount"] = componentCount.ToString();
+            }
+        }
+        catch (Exception)
+        {
+            // Ignore component count errors
         }
     }
 
@@ -235,7 +258,7 @@ public static class SolidWorksMetadataReader
         }
     }
 
-    private static swDocumentTypes_e GetDocumentType(string filePath)
+    public static swDocumentTypes_e GetDocumentType(string filePath)
     {
         string extension = Path.GetExtension(filePath).ToLowerInvariant();
 
