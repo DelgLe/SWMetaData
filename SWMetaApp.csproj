@@ -40,6 +40,7 @@
   <ItemGroup>
     <PackageReference Include="SolidWorks.Interop.sldworks" Version="32.1.0" />
     <PackageReference Include="SolidWorks.Interop.swconst" Version="32.1.0" />
+    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
   </ItemGroup>
 
 </Project>

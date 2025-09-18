@@ -6,45 +6,217 @@ using SolidWorks.Interop.swconst;
 
 public static class CommandInterface
 {
+    private static string? _databasePath = null;
+
     public static void RunInteractiveLoop(SldWorks swApp)
     {
+        // Show initial options
+        ShowMainMenu();
+
         while (true)
         {
-            Console.Write("Enter file path (or 'exit' to quit): ");
+            Console.Write("\nEnter your choice: ");
             string input = Console.ReadLine()?.Trim() ?? "";
 
             if (string.IsNullOrEmpty(input))
             {
-                Console.WriteLine("Please enter a file path or 'exit'.\n");
+                Console.WriteLine("Please enter a valid option.\n");
+                ShowMainMenu();
                 continue;
             }
 
-            if (input.Equals("exit", StringComparison.OrdinalIgnoreCase))
+            if (input.Equals("exit", StringComparison.OrdinalIgnoreCase) || input == "4")
             {
                 Console.WriteLine("Exiting application...");
                 break;
             }
 
-            try
+            switch (input)
             {
-                var metadata = SWMetadataReader.ReadMetadata(swApp, input);
-                DisplayMetadata(input, metadata);
+                case "1":
+                    ProcessSingleFile(swApp);
+                    break;
+                case "2":
+                    SetupDatabase();
+                    break;
+                case "3":
+                    ProcessFileWithDatabase(swApp);
+                    break;
+                default:
+                    Console.WriteLine("Invalid option. Please try again.");
+                    ShowMainMenu();
+                    break;
+            }
+        }
+    }
+
+    private static void ShowMainMenu()
+    {
+        Console.WriteLine("\n=== SolidWorks Metadata Reader ===");
+        Console.WriteLine("1. Process single file (display only)");
+        Console.WriteLine("2. Setup/Create database");
+        Console.WriteLine("3. Process file and save to database");
+        Console.WriteLine("4. Exit");
+        Console.WriteLine($"Current database: {(_databasePath ?? "Not set")}");
+    }
+
+    private static void ProcessSingleFile(SldWorks swApp)
+    {
+        Console.Write("Enter file path: ");
+        string filePath = Console.ReadLine()?.Trim() ?? "";
+
+        if (string.IsNullOrEmpty(filePath))
+        {
+            Console.WriteLine("Please enter a valid file path.");
+            return;
+        }
+
+        try
+        {
+            var metadata = SWMetadataReader.ReadMetadata(swApp, filePath);
+            DisplayMetadata(filePath, metadata);
+            
+            // Check if this is an assembly and offer BOM option
+            if (metadata.TryGetValue("DocumentType", out var docType) && 
+                docType.Contains("ASSEMBLY"))
+            {
+                OfferBomOption(swApp, filePath);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error: {ex.Message}");
+            if (ex.InnerException != null)
+                Console.WriteLine($"Details: {ex.InnerException.Message}");
+        }
+    }
+
+    private static void SetupDatabase()
+    {
+        Console.WriteLine("\n=== Database Setup ===");
+        Console.Write("Enter database file name (will be created in current folder): ");
+        string dbName = Console.ReadLine()?.Trim() ?? "";
+
+        if (string.IsNullOrEmpty(dbName))
+        {
+            Console.WriteLine("Database name cannot be empty.");
+            return;
+        }
+
+        // Ensure .db extension
+        if (!dbName.EndsWith(".db", StringComparison.OrdinalIgnoreCase))
+        {
+            dbName += ".db";
+        }
+
+        try
+        {
+            _databasePath = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), dbName);
+            
+            // Create database and initialize tables
+            using (var dbManager = new SWDatabaseManager(_databasePath))
+            {
+                Console.WriteLine($"Database created successfully: {_databasePath}");
+                Console.WriteLine("Tables initialized:");
+                Console.WriteLine("  - sw_documents (document metadata)");
+                Console.WriteLine("  - sw_custom_properties (custom properties)");
+                Console.WriteLine("  - sw_bom_items (bill of materials)");
+                Console.WriteLine("  - sw_configurations (part/assembly configurations)");
+                Console.WriteLine("  - sw_materials (material information)");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error creating database: {ex.Message}");
+            _databasePath = null;
+        }
+    }
+
+    private static void ProcessFileWithDatabase(SldWorks swApp)
+    {
+        if (string.IsNullOrEmpty(_databasePath))
+        {
+            Console.WriteLine("No database configured. Please setup database first (option 2).");
+            return;
+        }
+
+        Console.Write("Enter file path: ");
+        string filePath = Console.ReadLine()?.Trim() ?? "";
+
+        if (string.IsNullOrEmpty(filePath))
+        {
+            Console.WriteLine("Please enter a valid file path.");
+            return;
+        }
+
+        try
+        {
+            Console.WriteLine("Reading metadata from SolidWorks file...");
+            var metadata = SWMetadataReader.ReadMetadata(swApp, filePath);
+            
+            // Display the metadata
+            DisplayMetadata(filePath, metadata);
+
+            // Save to database
+            using var dbManager = new SWDatabaseManager(_databasePath);
+            Console.WriteLine("Saving to database...");
+            long documentId = dbManager.InsertDocumentMetadata(metadata);
+            Console.WriteLine($"Document saved with ID: {documentId}");
+
+            // Handle BOM for assemblies
+            if (metadata.TryGetValue("DocumentType", out var docType) && 
+                docType.Contains("ASSEMBLY"))
+            {
+                Console.WriteLine("\nAssembly detected. Processing BOM...");
                 
-                // Check if this is an assembly and offer BOM option
-                if (metadata.TryGetValue("DocumentType", out var docType) && 
-                    docType.Contains("ASSEMBLY"))
+                // Re-open document for BOM processing
+                ModelDoc2? swModel = null;
+                int errors = 0, warnings = 0;
+                
+                swDocumentTypes_e documentType = SWMetadataReader.GetDocumentType(filePath);
+                swModel = swApp.OpenDoc6(filePath, (int)documentType,
+                    (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings);
+
+                if (swModel != null)
                 {
-                    OfferBomOption(swApp, input);
+                    try
+                    {
+                        var bomItems = SWAssemblyTraverser.GetUnsuppressedComponents(swModel, true);
+                        if (bomItems.Count > 0)
+                        {
+                            dbManager.InsertBomItems(filePath, bomItems);
+                            Console.WriteLine($"Saved {bomItems.Count} BOM items to database");
+                            
+                            // Offer to display BOM
+                            Console.Write("Display BOM? (y/n): ");
+                            if (Console.ReadLine()?.Trim().ToLower() == "y")
+                            {
+                                DisplayBomFromList(bomItems, "Bill of Materials (from database)");
+                            }
+                        }
+                        else
+                        {
+                            Console.WriteLine("No BOM items found in assembly");
+                        }
+                    }
+                    finally
+                    {
+                        swApp.CloseDoc(swModel.GetTitle());
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("Could not re-open document for BOM processing");
                 }
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error: {ex.Message}");
-                if (ex.InnerException != null)
-                    Console.WriteLine($"Details: {ex.InnerException.Message}");
-            }
 
-            Console.WriteLine();
+            Console.WriteLine("File processing complete!");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error processing file: {ex.Message}");
+            if (ex.InnerException != null)
+                Console.WriteLine($"Details: {ex.InnerException.Message}");
         }
     }
 
@@ -198,30 +370,7 @@ public static class CommandInterface
                 title = "Bill of Materials (Unsuppressed Components Only)";
             }
 
-            Console.WriteLine($"\n--- {title} ---");
-            
-            if (bomItems.Count == 0)
-            {
-                Console.WriteLine("No components found in the assembly.");
-            }
-            else
-            {
-                Console.WriteLine($"Total components: {bomItems.Count}");
-                Console.WriteLine(new string('-', 80));
-
-                foreach (var item in bomItems)
-                {
-                    string indent = new string(' ', item.Level * 2);
-                    string quantity = item.Quantity > 1 ? $"({item.Quantity}x) " : "";
-                    string suppression = item.IsSuppressed ? " [SUPPRESSED]" : "";
-                    
-                    Console.WriteLine($"{indent}{quantity}{item.ComponentName}");
-                    Console.WriteLine($"{indent}  File: {item.FileName} | Config: {item.Configuration}{suppression}");
-                    
-                    if (item.Level == 0) // Add spacing between top-level components
-                        Console.WriteLine();
-                }
-            }
+            DisplayBomFromList(bomItems, title);
 
             // Close the document
             if (swModel != null)
@@ -230,6 +379,34 @@ public static class CommandInterface
         catch (Exception ex)
         {
             Console.WriteLine($"Error generating BOM: {ex.Message}");
+        }
+    }
+
+    private static void DisplayBomFromList(List<BomItem> bomItems, string title)
+    {
+        Console.WriteLine($"\n--- {title} ---");
+        
+        if (bomItems.Count == 0)
+        {
+            Console.WriteLine("No components found in the assembly.");
+        }
+        else
+        {
+            Console.WriteLine($"Total components: {bomItems.Count}");
+            Console.WriteLine(new string('-', 80));
+
+            foreach (var item in bomItems)
+            {
+                string indent = new string(' ', item.Level * 2);
+                string quantity = item.Quantity > 1 ? $"({item.Quantity}x) " : "";
+                string suppression = item.IsSuppressed ? " [SUPPRESSED]" : "";
+                
+                Console.WriteLine($"{indent}{quantity}{item.ComponentName}");
+                Console.WriteLine($"{indent}  File: {item.FileName} | Config: {item.Configuration}{suppression}");
+                
+                if (item.Level == 0) // Add spacing between top-level components
+                    Console.WriteLine();
+            }
         }
     }
 }
