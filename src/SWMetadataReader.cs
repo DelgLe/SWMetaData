@@ -14,7 +14,7 @@ public static class SWMetadataReader
         if (swApp == null)
             throw new InvalidOperationException("SolidWorks not initialized. Please restart the application.");
 
-        ModelDoc2 swModel = null;
+        ModelDoc2? swModel = null;
         var metadata = new Dictionary<string, string>();
 
         try
@@ -151,17 +151,45 @@ public static class SWMetadataReader
         swDocumentTypes_e docType = GetDocumentType(filePath);
         int errors = 0, warnings = 0;
 
+        Console.WriteLine($"Attempting to open {docType}: {Path.GetFileName(filePath)}");
+
         ModelDoc2 swModel = swApp.OpenDoc6(filePath, (int)docType,
             (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings);
 
         if (swModel == null)
         {
+            // For failed opens, especially assemblies, SolidWorks might still have 
+            // partially loaded documents that need cleanup
+            Console.WriteLine($"Document failed to open: {Path.GetFileName(filePath)} (Errors: {errors}, Warnings: {warnings})");
+            
+            // Force cleanup of any partially loaded documents
+            try
+            {
+                Console.WriteLine("Cleaning up any partially loaded documents...");
+                swApp.CloseAllDocuments(true); // Force close any hanging documents
+                
+                // Additional cleanup - sometimes SolidWorks needs a moment
+                System.Threading.Thread.Sleep(500);
+                
+                // Force garbage collection to help with COM cleanup
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+                
+                Console.WriteLine("Cleanup completed for failed document open");
+            }
+            catch (Exception cleanupEx)
+            {
+                Console.WriteLine($"Warning: Cleanup after failed open had issues: {cleanupEx.Message}");
+            }
+
             string errorMsg = $"Failed to open document: {Path.GetFileName(filePath)}";
             if (errors != 0) errorMsg += $" (Errors: {errors})";
             if (warnings != 0) errorMsg += $" (Warnings: {warnings})";
             throw new InvalidOperationException(errorMsg);
         }
 
+        Console.WriteLine($"Successfully opened: {Path.GetFileName(filePath)}");
         return swModel;
     }
 
@@ -243,18 +271,93 @@ public static class SWMetadataReader
         }
     }
 
-    private static void CleanupDocument(SldWorks swApp, ModelDoc2 swModel)
+    private static void CleanupDocument(SldWorks swApp, ModelDoc2? swModel)
     {
         if (swModel == null) return;
 
         try
         {
-            swApp?.CloseDoc(swModel.GetTitle());
+            // Get the full path name which is more reliable for closing documents
+            string pathName = swModel.GetPathName();
+            
+            // Try multiple methods to close the document properly
+            bool docClosed = false;
+            
+            if (!string.IsNullOrEmpty(pathName))
+            {
+                // Method 1: Close by path name (most reliable)
+                try
+                {
+                    swApp.CloseDoc(pathName);
+                    docClosed = true;
+                    Console.WriteLine($"Document closed successfully: {Path.GetFileName(pathName)}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to close document by path: {ex.Message}");
+                }
+            }
+            
+            // Method 2: If path method failed, try by title
+            if (!docClosed)
+            {
+                try
+                {
+                    string title = swModel.GetTitle();
+                    if (!string.IsNullOrEmpty(title))
+                    {
+                        swApp.CloseDoc(title);
+                        docClosed = true;
+                        Console.WriteLine($"Document closed by title: {title}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to close document by title: {ex.Message}");
+                }
+            }
+            
+            // Method 3: Force close all documents if previous methods failed
+            if (!docClosed)
+            {
+                try
+                {
+                    Console.WriteLine("Warning: Attempting to close all documents as fallback...");
+                    swApp.CloseAllDocuments(true); // true = force close without saving
+                    Console.WriteLine("All documents closed forcefully");
+                    docClosed = true;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to force close documents: {ex.Message}");
+                }
+            }
+            
+            // Always release COM object regardless of close success
             Marshal.ReleaseComObject(swModel);
+            
+            // Additional cleanup - force garbage collection to help release COM resources
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            
+            if (!docClosed)
+            {
+                Console.WriteLine("Warning: Document may not have been properly closed - check SolidWorks taskbar");
+            }
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // Ignore document cleanup errors
+            Console.WriteLine($"Error during document cleanup: {ex.Message}");
+            // Still try to release COM object
+            try
+            {
+                Marshal.ReleaseComObject(swModel);
+            }
+            catch
+            {
+                // Final fallback - ignore any errors
+            }
         }
     }
 

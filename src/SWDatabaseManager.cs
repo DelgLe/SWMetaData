@@ -323,6 +323,171 @@ public class SWDatabaseManager : IDisposable
         return documentFound ? metadata : null;
     }
 
+    #region Target Files Management
+
+    /// <summary>
+    /// Get all target files from the target_files table
+    /// </summary>
+    /// <returns>List of target file information</returns>
+    public List<TargetFileInfo> GetTargetFiles()
+    {
+        const string sql = @"
+            SELECT TargetID, EngID, file_name, file_path, DrawID, notes, 
+                   source_directory, folder_name, file_count
+            FROM target_files 
+            ORDER BY TargetID";
+
+        var targetFiles = new List<TargetFileInfo>();
+
+        using var command = new SQLiteCommand(sql, _connection);
+        using var reader = command.ExecuteReader();
+        
+        while (reader.Read())
+        {
+            targetFiles.Add(new TargetFileInfo
+            {
+                TargetID = Convert.ToInt32(reader["TargetID"]),
+                EngID = reader["EngID"]?.ToString(),
+                FileName = reader["file_name"]?.ToString(),
+                FilePath = reader["file_path"]?.ToString(),
+                DrawID = reader["DrawID"]?.ToString(),
+                Notes = reader["notes"]?.ToString(),
+                SourceDirectory = reader["source_directory"]?.ToString(),
+                FolderName = reader["folder_name"]?.ToString(),
+                FileCount = Convert.ToInt32(reader["file_count"])
+            });
+        }
+
+        return targetFiles;
+    }
+
+    /// <summary>
+    /// Add a new target file to the target_files table
+    /// </summary>
+    /// <param name="targetFile">Target file information to add</param>
+    public void AddTargetFile(TargetFileInfo targetFile)
+    {
+        if (targetFile == null)
+            throw new ArgumentNullException(nameof(targetFile));
+
+        const string sql = @"
+            INSERT INTO target_files 
+            (EngID, file_name, file_path, DrawID, notes, source_directory, folder_name, file_count)
+            VALUES (@engId, @fileName, @filePath, @drawId, @notes, @sourceDirectory, @folderName, @fileCount)";
+
+        using var command = new SQLiteCommand(sql, _connection);
+        command.Parameters.AddWithValue("@engId", targetFile.EngID ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@fileName", targetFile.FileName ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@filePath", targetFile.FilePath ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@drawId", targetFile.DrawID ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@notes", targetFile.Notes ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@sourceDirectory", targetFile.SourceDirectory ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@folderName", targetFile.FolderName ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@fileCount", targetFile.FileCount);
+        
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Quick add a target file with just file path
+    /// </summary>
+    /// <param name="filePath">Path to the SolidWorks file</param>
+    /// <param name="engId">Optional engineering ID</param>
+    public void AddTargetFile(string filePath, string? engId = null)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+            throw new ArgumentException("File path cannot be null or empty", nameof(filePath));
+
+        var targetFile = new TargetFileInfo
+        {
+            EngID = engId,
+            FileName = System.IO.Path.GetFileName(filePath),
+            FilePath = filePath,
+            SourceDirectory = System.IO.Path.GetDirectoryName(filePath),
+            FolderName = System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(filePath)),
+            FileCount = 1
+        };
+
+        AddTargetFile(targetFile);
+    }
+
+    /// <summary>
+    /// Update an existing target file
+    /// </summary>
+    /// <param name="targetFile">Updated target file information</param>
+    public void UpdateTargetFile(TargetFileInfo targetFile)
+    {
+        if (targetFile == null)
+            throw new ArgumentNullException(nameof(targetFile));
+
+        const string sql = @"
+            UPDATE target_files 
+            SET EngID = @engId, file_name = @fileName, file_path = @filePath, 
+                DrawID = @drawId, notes = @notes, source_directory = @sourceDirectory, 
+                folder_name = @folderName, file_count = @fileCount
+            WHERE TargetID = @targetId";
+
+        using var command = new SQLiteCommand(sql, _connection);
+        command.Parameters.AddWithValue("@targetId", targetFile.TargetID);
+        command.Parameters.AddWithValue("@engId", targetFile.EngID ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@fileName", targetFile.FileName ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@filePath", targetFile.FilePath ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@drawId", targetFile.DrawID ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@notes", targetFile.Notes ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@sourceDirectory", targetFile.SourceDirectory ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@folderName", targetFile.FolderName ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@fileCount", targetFile.FileCount);
+        
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Remove a target file from the target_files table
+    /// </summary>
+    /// <param name="targetId">Target ID to remove</param>
+    public void RemoveTargetFile(int targetId)
+    {
+        const string sql = "DELETE FROM target_files WHERE TargetID = @targetId";
+
+        using var command = new SQLiteCommand(sql, _connection);
+        command.Parameters.AddWithValue("@targetId", targetId);
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Get target files that exist as actual files on disk
+    /// </summary>
+    /// <returns>List of valid target files</returns>
+    public List<TargetFileInfo> GetValidTargetFiles()
+    {
+        var allTargets = GetTargetFiles();
+        var validTargets = new List<TargetFileInfo>();
+
+        foreach (var target in allTargets)
+        {
+            if (!string.IsNullOrEmpty(target.FilePath) && System.IO.File.Exists(target.FilePath))
+            {
+                validTargets.Add(target);
+            }
+        }
+
+        return validTargets;
+    }
+
+    /// <summary>
+    /// Get count of target files
+    /// </summary>
+    /// <returns>Total count of target files</returns>
+    public int GetTargetFileCount()
+    {
+        const string sql = "SELECT COUNT(*) FROM target_files";
+        
+        using var command = new SQLiteCommand(sql, _connection);
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
+
+    #endregion
+
     #region Private Helper Methods
 
     private long InsertOrUpdateDocument(Dictionary<string, string> metadata)

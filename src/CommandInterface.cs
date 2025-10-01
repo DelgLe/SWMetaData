@@ -7,14 +7,135 @@ using SolidWorks.Interop.swconst;
 public static class CommandInterface
 {
     private static string? _databasePath = null;
+    private static AppConfig? _config = null;
+
+    /// <summary>
+    /// Properly close a SolidWorks document with multiple fallback methods
+    /// </summary>
+    private static void CloseDocumentSafely(SldWorks swApp, ModelDoc2? swModel)
+    {
+        // Even if swModel is null, we might need to clean up hanging documents
+        if (swModel == null) 
+        {
+            // Check if there are any open documents that might be hanging
+            try
+            {
+                // Get count of currently open documents
+                int docCount = swApp.GetDocumentCount();
+                if (docCount > 0)
+                {
+                    Console.WriteLine($"Warning: Found {docCount} potentially hanging documents, cleaning up...");
+                    swApp.CloseAllDocuments(true);
+                    System.Threading.Thread.Sleep(200);
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Warning during hanging document cleanup: {ex.Message}");
+            }
+            return;
+        }
+
+        try
+        {
+            // Method 1: Try to close by path (most reliable)
+            string pathName = swModel.GetPathName();
+            if (!string.IsNullOrEmpty(pathName))
+            {
+                try
+                {
+                    swApp.CloseDoc(pathName);
+                    Console.WriteLine($"Document closed: {Path.GetFileName(pathName)}");
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to close by path: {ex.Message}");
+                }
+            }
+
+            // Method 2: Try to close by title
+            try
+            {
+                string title = swModel.GetTitle();
+                if (!string.IsNullOrEmpty(title))
+                {
+                    swApp.CloseDoc(title);
+                    Console.WriteLine($"Document closed by title: {title}");
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to close by title: {ex.Message}");
+            }
+
+            // Method 3: Force close all documents as last resort
+            Console.WriteLine("Warning: Forcing close of all documents...");
+            swApp.CloseAllDocuments(true);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error closing document: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Force cleanup of hanging documents, especially useful for assemblies that fail to open
+    /// </summary>
+    private static void ForceCleanupHangingDocuments(SldWorks swApp, string context = "")
+    {
+        try
+        {
+            int docCount = swApp.GetDocumentCount();
+            if (docCount > 0)
+            {
+                Console.WriteLine($"{context}Forcing cleanup of {docCount} hanging document(s)...");
+                swApp.CloseAllDocuments(true); // Force close without saving
+                
+                // Give SolidWorks a moment to clean up
+                System.Threading.Thread.Sleep(500);
+                
+                // Force garbage collection to help with COM cleanup
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+                
+                // Verify cleanup
+                int remainingDocs = swApp.GetDocumentCount();
+                if (remainingDocs == 0)
+                {
+                    Console.WriteLine($"{context}Successfully cleaned up hanging documents");
+                }
+                else
+                {
+                    Console.WriteLine($"{context}Warning: {remainingDocs} document(s) still hanging after cleanup");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"{context}Error during hanging document cleanup: {ex.Message}");
+        }
+    }
 
     public static void RunInteractiveLoop(SldWorks swApp)
     {
+        // Load configuration
+        _config = ConfigManager.LoadConfig();
+        if (!string.IsNullOrEmpty(_config.DatabasePath))
+        {
+            _databasePath = _config.DatabasePath;
+            Console.WriteLine($"Using database from config: {_databasePath}");
+        }
+
         // Show initial options
-        ShowMainMenu();
 
         while (true)
         {
+            ShowMainMenu();
             Console.Write("\nEnter your choice: ");
             string input = Console.ReadLine()?.Trim() ?? "";
 
@@ -25,7 +146,7 @@ public static class CommandInterface
                 continue;
             }
 
-            if (input.Equals("exit", StringComparison.OrdinalIgnoreCase) || input == "4")
+            if (input.Equals("exit", StringComparison.OrdinalIgnoreCase) || input == "7")
             {
                 Console.WriteLine("Exiting application...");
                 break;
@@ -42,9 +163,17 @@ public static class CommandInterface
                 case "3":
                     ProcessFileWithDatabase(swApp);
                     break;
+                case "4":
+                    ManageTargetFiles();
+                    break;
+                case "5":
+                    ProcessAllTargetFiles(swApp);
+                    break;
+                case "6":
+                    ManageConfiguration();
+                    break;
                 default:
                     Console.WriteLine("Invalid option. Please try again.");
-                    ShowMainMenu();
                     break;
             }
         }
@@ -56,8 +185,15 @@ public static class CommandInterface
         Console.WriteLine("1. Process single file (display only)");
         Console.WriteLine("2. Setup/Create database");
         Console.WriteLine("3. Process file and save to database");
-        Console.WriteLine("4. Exit");
+        Console.WriteLine("4. Manage target files");
+        Console.WriteLine("5. Process all target files (batch)");
+        Console.WriteLine("6. Configuration settings");
+        Console.WriteLine("7. Exit");
         Console.WriteLine($"Current database: {(_databasePath ?? "Not set")}");
+        if (_config != null)
+        {
+            Console.WriteLine($"Config loaded: {(_config.DatabasePath != null ? "Yes" : "Default")}");
+        }
     }
 
     private static void ProcessSingleFile(SldWorks swApp)
@@ -94,6 +230,107 @@ public static class CommandInterface
     private static void SetupDatabase()
     {
         Console.WriteLine("\n=== Database Setup ===");
+        
+        // Check if config has a database path
+        bool hasConfigDatabase = _config != null && !string.IsNullOrEmpty(_config.DatabasePath);
+        
+        if (hasConfigDatabase)
+        {
+            Console.WriteLine($"Configuration database path found: {_config!.DatabasePath}");
+            Console.WriteLine("Choose an option:");
+            Console.WriteLine("1. Use existing config database path (setup tables if needed)");
+            Console.WriteLine("2. Create new database in current folder");
+            Console.Write("Enter your choice (1-2): ");
+            
+            string choice = Console.ReadLine()?.Trim() ?? "";
+            
+            if (choice == "1")
+            {
+                SetupConfigDatabase();
+                return;
+            }
+            else if (choice != "2")
+            {
+                Console.WriteLine("Invalid choice. Creating new database in current folder...");
+            }
+        }
+        
+        // Create new database in current folder
+        SetupNewDatabase();
+    }
+
+    private static void SetupConfigDatabase()
+    {
+        if (_config == null || string.IsNullOrEmpty(_config.DatabasePath))
+        {
+            Console.WriteLine("No config database path available.");
+            return;
+        }
+
+        try
+        {
+            string configDbPath = _config.DatabasePath;
+            bool dbExists = System.IO.File.Exists(configDbPath);
+            
+            Console.WriteLine($"Setting up database at: {configDbPath}");
+            
+            if (dbExists)
+            {
+                Console.WriteLine("Database file already exists. Checking/creating tables...");
+            }
+            else
+            {
+                Console.WriteLine("Database file doesn't exist. Creating new database...");
+                
+                // Create directory if it doesn't exist
+                string? directory = System.IO.Path.GetDirectoryName(configDbPath);
+                if (!string.IsNullOrEmpty(directory) && !System.IO.Directory.Exists(directory))
+                {
+                    System.IO.Directory.CreateDirectory(directory);
+                    Console.WriteLine($"Created directory: {directory}");
+                }
+            }
+            
+            // Create/initialize database and tables
+            using (var dbManager = new SWDatabaseManager(configDbPath))
+            {
+                _databasePath = configDbPath;
+                
+                if (dbExists)
+                {
+                    Console.WriteLine("Database connected successfully!");
+                    Console.WriteLine("Tables verified/created:");
+                }
+                else
+                {
+                    Console.WriteLine("Database created successfully!");
+                    Console.WriteLine("Tables initialized:");
+                }
+                
+                Console.WriteLine("  - sw_documents (document metadata)");
+                Console.WriteLine("  - sw_custom_properties (custom properties)");
+                Console.WriteLine("  - sw_bom_items (bill of materials)");
+                Console.WriteLine("  - sw_configurations (part/assembly configurations)");
+                Console.WriteLine("  - sw_materials (material information)");
+                Console.WriteLine("  - target_files (target files for batch processing)");
+                
+                // Check if target_files has existing data
+                int targetFileCount = dbManager.GetTargetFileCount();
+                if (targetFileCount > 0)
+                {
+                    Console.WriteLine($"Found {targetFileCount} existing target files in database.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error setting up config database: {ex.Message}");
+            _databasePath = null;
+        }
+    }
+
+    private static void SetupNewDatabase()
+    {
         Console.Write("Enter database file name (will be created in current folder): ");
         string dbName = Console.ReadLine()?.Trim() ?? "";
 
@@ -111,18 +348,42 @@ public static class CommandInterface
 
         try
         {
-            _databasePath = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), dbName);
+            string newDbPath = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), dbName);
+            
+            if (System.IO.File.Exists(newDbPath))
+            {
+                Console.Write($"Database file '{dbName}' already exists. Overwrite? (y/n): ");
+                if (Console.ReadLine()?.Trim().ToLower() != "y")
+                {
+                    Console.WriteLine("Database setup cancelled.");
+                    return;
+                }
+            }
             
             // Create database and initialize tables
-            using (var dbManager = new SWDatabaseManager(_databasePath))
+            using (var dbManager = new SWDatabaseManager(newDbPath))
             {
-                Console.WriteLine($"Database created successfully: {_databasePath}");
+                _databasePath = newDbPath;
+                
+                Console.WriteLine($"Database created successfully: {newDbPath}");
                 Console.WriteLine("Tables initialized:");
                 Console.WriteLine("  - sw_documents (document metadata)");
                 Console.WriteLine("  - sw_custom_properties (custom properties)");
                 Console.WriteLine("  - sw_bom_items (bill of materials)");
                 Console.WriteLine("  - sw_configurations (part/assembly configurations)");
                 Console.WriteLine("  - sw_materials (material information)");
+                Console.WriteLine("  - target_files (target files for batch processing)");
+            }
+            
+            // Ask if user wants to update config
+            if (_config != null)
+            {
+                Console.Write("Update configuration to use this new database? (y/n): ");
+                if (Console.ReadLine()?.Trim().ToLower() == "y")
+                {
+                    _config.DatabasePath = newDbPath;
+                    Console.WriteLine("Configuration updated. Use 'Configuration settings > Save current configuration' to persist changes.");
+                }
             }
         }
         catch (Exception ex)
@@ -171,15 +432,17 @@ public static class CommandInterface
                 
                 // Re-open document for BOM processing
                 ModelDoc2? swModel = null;
-                int errors = 0, warnings = 0;
-                
-                swDocumentTypes_e documentType = SWMetadataReader.GetDocumentType(filePath);
-                swModel = swApp.OpenDoc6(filePath, (int)documentType,
-                    (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings);
-
-                if (swModel != null)
+                try
                 {
-                    try
+                    int errors = 0, warnings = 0;
+                    
+                    swDocumentTypes_e documentType = SWMetadataReader.GetDocumentType(filePath);
+                    Console.WriteLine($"Opening {documentType} for BOM processing: {Path.GetFileName(filePath)}");
+                    
+                    swModel = swApp.OpenDoc6(filePath, (int)documentType,
+                        (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings);
+
+                    if (swModel != null)
                     {
                         var bomItems = SWAssemblyTraverser.GetUnsuppressedComponents(swModel, true);
                         if (bomItems.Count > 0)
@@ -199,14 +462,20 @@ public static class CommandInterface
                             Console.WriteLine("No BOM items found in assembly");
                         }
                     }
-                    finally
+                    else
                     {
-                        swApp.CloseDoc(swModel.GetTitle());
+                        Console.WriteLine($"Could not re-open document for BOM processing (Errors: {errors}, Warnings: {warnings})");
+                        
+                        // Assembly files sometimes hang even when open fails - force cleanup
+                        if (documentType == swDocumentTypes_e.swDocASSEMBLY)
+                        {
+                            ForceCleanupHangingDocuments(swApp, "Assembly failed to open - ");
+                        }
                     }
                 }
-                else
+                finally
                 {
-                    Console.WriteLine("Could not re-open document for BOM processing");
+                    CloseDocumentSafely(swApp, swModel);
                 }
             }
 
@@ -340,19 +609,27 @@ public static class CommandInterface
 
     public static void DisplayBom(SldWorks swApp, string filePath, bool includeSupressed)
     {
+        ModelDoc2? swModel = null;
         try
         {
             // Re-open the document (it should already be cached/quick to open)
-            ModelDoc2? swModel = null;
             int errors = 0, warnings = 0;
             
             swDocumentTypes_e docType = SWMetadataReader.GetDocumentType(filePath);
+            Console.WriteLine($"Opening {docType} for BOM display: {Path.GetFileName(filePath)}");
+            
             swModel = swApp.OpenDoc6(filePath, (int)docType,
                 (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings);
 
             if (swModel == null)
             {
-                Console.WriteLine("Error: Could not open assembly for BOM generation.");
+                Console.WriteLine($"Error: Could not open assembly for BOM generation (Errors: {errors}, Warnings: {warnings}).");
+                
+                // Assembly files sometimes hang even when open fails - force cleanup
+                if (docType == swDocumentTypes_e.swDocASSEMBLY)
+                {
+                    ForceCleanupHangingDocuments(swApp, "Assembly failed to open - ");
+                }
                 return;
             }
 
@@ -371,14 +648,15 @@ public static class CommandInterface
             }
 
             DisplayBomFromList(bomItems, title);
-
-            // Close the document
-            if (swModel != null)
-                swApp.CloseDoc(swModel.GetTitle());
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Error generating BOM: {ex.Message}");
+        }
+        finally
+        {
+            // Always close the document, even if an exception occurred
+            CloseDocumentSafely(swApp, swModel);
         }
     }
 
@@ -407,6 +685,510 @@ public static class CommandInterface
                 if (item.Level == 0) // Add spacing between top-level components
                     Console.WriteLine();
             }
+        }
+    }
+
+    private static void ManageTargetFiles()
+    {
+        if (string.IsNullOrEmpty(_databasePath))
+        {
+            Console.WriteLine("No database configured. Please setup database first (option 2).");
+            return;
+        }
+
+        while (true)
+        {
+            Console.WriteLine("\n=== Target Files Management ===");
+            Console.WriteLine("1. View all target files");
+            Console.WriteLine("2. Add target file");
+            Console.WriteLine("3. Remove target file");
+            Console.WriteLine("4. Validate target files (check if files exist)");
+            Console.WriteLine("5. Back to main menu");
+            Console.Write("Enter your choice: ");
+
+            string choice = Console.ReadLine()?.Trim() ?? "";
+
+            switch (choice)
+            {
+                case "1":
+                    ViewTargetFiles();
+                    break;
+                case "2":
+                    AddTargetFile();
+                    break;
+                case "3":
+                    RemoveTargetFile();
+                    break;
+                case "4":
+                    ValidateTargetFiles();
+                    break;
+                case "5":
+                    //ShowMainMenu(); Should always show on return
+                    return;
+                default:
+                    Console.WriteLine("Invalid option. Please try again.");
+                    break;
+            }
+        }
+    }
+
+    private static void ViewTargetFiles()
+    {
+        try
+        {
+            using var dbManager = new SWDatabaseManager(_databasePath!);
+            var targetFiles = dbManager.GetTargetFiles();
+
+            if (targetFiles.Count == 0)
+            {
+                Console.WriteLine("No target files found in database.");
+                return;
+            }
+
+            Console.WriteLine($"\n=== Target Files ({targetFiles.Count} files) ===");
+            Console.WriteLine(new string('-', 100));
+            Console.WriteLine("{0,-3} {1,-15} {2,-30} {3,-40}", "ID", "EngID", "File Name", "File Path");
+            Console.WriteLine(new string('-', 100));
+
+            foreach (var file in targetFiles)
+            {
+                string engId = file.EngID ?? "N/A";
+                string fileName = file.FileName ?? "N/A";
+                string filePath = file.FilePath ?? "N/A";
+                
+                // Truncate long paths for display
+                if (filePath.Length > 40)
+                    filePath = "..." + filePath.Substring(filePath.Length - 37);
+
+                Console.WriteLine("{0,-3} {1,-15} {2,-30} {3,-40}", 
+                    file.TargetID, engId, fileName, filePath);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error viewing target files: {ex.Message}");
+        }
+    }
+
+    private static void AddTargetFile()
+    {
+        try
+        {
+            Console.Write("Enter file path: ");
+            string filePath = Console.ReadLine()?.Trim() ?? "";
+
+            if (string.IsNullOrEmpty(filePath))
+            {
+                Console.WriteLine("File path cannot be empty.");
+                return;
+            }
+
+            if (!System.IO.File.Exists(filePath))
+            {
+                Console.WriteLine("Warning: File does not exist at the specified path.");
+                Console.Write("Continue anyway? (y/n): ");
+                if (Console.ReadLine()?.Trim().ToLower() != "y")
+                    return;
+            }
+
+            Console.Write("Enter Engineering ID (optional): ");
+            string? engId = Console.ReadLine()?.Trim();
+            if (string.IsNullOrEmpty(engId)) engId = null;
+
+            Console.Write("Enter Drawing ID (optional): ");
+            string? drawId = Console.ReadLine()?.Trim();
+            if (string.IsNullOrEmpty(drawId)) drawId = null;
+
+            Console.Write("Enter notes (optional): ");
+            string? notes = Console.ReadLine()?.Trim();
+            if (string.IsNullOrEmpty(notes)) notes = null;
+
+            using var dbManager = new SWDatabaseManager(_databasePath!);
+            
+            var targetFile = new TargetFileInfo
+            {
+                EngID = engId,
+                FileName = System.IO.Path.GetFileName(filePath),
+                FilePath = filePath,
+                DrawID = drawId,
+                Notes = notes,
+                SourceDirectory = System.IO.Path.GetDirectoryName(filePath),
+                FolderName = System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(filePath)),
+                FileCount = 1
+            };
+
+            dbManager.AddTargetFile(targetFile);
+            Console.WriteLine("Target file added successfully!");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error adding target file: {ex.Message}");
+        }
+    }
+
+    private static void RemoveTargetFile()
+    {
+        try
+        {
+            using var dbManager = new SWDatabaseManager(_databasePath!);
+            var targetFiles = dbManager.GetTargetFiles();
+
+            if (targetFiles.Count == 0)
+            {
+                Console.WriteLine("No target files to remove.");
+                return;
+            }
+
+            Console.WriteLine("\nTarget Files:");
+            foreach (var file in targetFiles.Take(20)) // Show first 20
+            {
+                Console.WriteLine($"{file.TargetID}: {file.FileName} ({file.EngID ?? "No EngID"})");
+            }
+
+            if (targetFiles.Count > 20)
+                Console.WriteLine($"... and {targetFiles.Count - 20} more files");
+
+            Console.Write("Enter Target ID to remove: ");
+            if (int.TryParse(Console.ReadLine(), out int targetId))
+            {
+                dbManager.RemoveTargetFile(targetId);
+                Console.WriteLine("Target file removed successfully!");
+            }
+            else
+            {
+                Console.WriteLine("Invalid Target ID.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error removing target file: {ex.Message}");
+        }
+    }
+
+    private static void ValidateTargetFiles()
+    {
+        try
+        {
+            using var dbManager = new SWDatabaseManager(_databasePath!);
+            var allFiles = dbManager.GetTargetFiles();
+            var validFiles = dbManager.GetValidTargetFiles();
+
+            Console.WriteLine($"\nValidation Results:");
+            Console.WriteLine($"Total target files: {allFiles.Count}");
+            Console.WriteLine($"Valid files (exist on disk): {validFiles.Count}");
+            Console.WriteLine($"Missing files: {allFiles.Count - validFiles.Count}");
+
+            if (allFiles.Count != validFiles.Count)
+            {
+                Console.WriteLine("\nMissing files:");
+                foreach (var file in allFiles)
+                {
+                    if (!string.IsNullOrEmpty(file.FilePath) && !System.IO.File.Exists(file.FilePath))
+                    {
+                        Console.WriteLine($"  ID {file.TargetID}: {file.FilePath}");
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error validating target files: {ex.Message}");
+        }
+    }
+
+    private static void ProcessAllTargetFiles(SldWorks swApp)
+    {
+        if (string.IsNullOrEmpty(_databasePath))
+        {
+            Console.WriteLine("No database configured. Please setup database first (option 2).");
+            return;
+        }
+
+        try
+        {
+            using var dbManager = new SWDatabaseManager(_databasePath);
+            var validFiles = dbManager.GetValidTargetFiles();
+
+            if (validFiles.Count == 0)
+            {
+                Console.WriteLine("No valid target files found to process.");
+                return;
+            }
+
+            Console.WriteLine($"Found {validFiles.Count} valid target files to process.");
+            Console.Write("Continue with batch processing? (y/n): ");
+            
+            if (Console.ReadLine()?.Trim().ToLower() != "y")
+                return;
+
+            int processed = 0;
+            int errors = 0;
+
+            foreach (var targetFile in validFiles)
+            {
+                try
+                {
+                    Console.WriteLine($"\nProcessing {processed + 1}/{validFiles.Count}: {targetFile.FileName}");
+                    
+                    if (string.IsNullOrEmpty(targetFile.FilePath))
+                    {
+                        Console.WriteLine("Skipping - no file path");
+                        errors++;
+                        continue;
+                    }
+
+                    var metadata = SWMetadataReader.ReadMetadata(swApp, targetFile.FilePath);
+                    long documentId = dbManager.InsertDocumentMetadata(metadata);
+                    
+                    // Process BOM for assemblies
+                    if (metadata.TryGetValue("DocumentType", out var docType) && 
+                        docType.Contains("ASSEMBLY"))
+                    {
+                        ModelDoc2? swModel = null;
+                        try
+                        {
+                            int swErrors = 0, warnings = 0;
+                            var assemblyDocType = SWMetadataReader.GetDocumentType(targetFile.FilePath);
+                            Console.WriteLine($"  Opening {assemblyDocType}: {Path.GetFileName(targetFile.FilePath)}");
+                            
+                            swModel = swApp.OpenDoc6(targetFile.FilePath, 
+                                (int)assemblyDocType,
+                                (int)SolidWorks.Interop.swconst.swOpenDocOptions_e.swOpenDocOptions_Silent, 
+                                "", ref swErrors, ref warnings);
+
+                            if (swModel != null)
+                            {
+                                var bomItems = SWAssemblyTraverser.GetUnsuppressedComponents(swModel, true);
+                                if (bomItems.Count > 0)
+                                {
+                                    dbManager.InsertBomItems(targetFile.FilePath, bomItems);
+                                    Console.WriteLine($"  Saved {bomItems.Count} BOM items");
+                                }
+                                else
+                                {
+                                    Console.WriteLine("  No BOM items found");
+                                }
+                            }
+                            else
+                            {
+                                Console.WriteLine($"  Could not open assembly (Errors: {swErrors}, Warnings: {warnings})");
+                                
+                                // Assembly files sometimes hang even when open fails - force cleanup
+                                if (assemblyDocType == swDocumentTypes_e.swDocASSEMBLY)
+                                {
+                                    ForceCleanupHangingDocuments(swApp, "  Assembly failed to open - ");
+                                }
+                            }
+                        }
+                        catch (Exception bomEx)
+                        {
+                            Console.WriteLine($"  BOM processing error: {bomEx.Message}");
+                        }
+                        finally
+                        {
+                            CloseDocumentSafely(swApp, swModel);
+                        }
+                    }
+
+                    processed++;
+                    Console.WriteLine($"  Success! Document ID: {documentId}");
+                    
+                    // Periodic cleanup check every 10 files to prevent accumulation
+                    if (processed % 10 == 0)
+                    {
+                        ForceCleanupHangingDocuments(swApp, $"  Periodic cleanup after {processed} files - ");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"  Error: {ex.Message}");
+                    errors++;
+                    
+                    // Force cleanup after errors to prevent hanging documents
+                    ForceCleanupHangingDocuments(swApp, "  Error cleanup - ");
+                }
+            }
+
+            Console.WriteLine($"\n=== Batch Processing Complete ===");
+            Console.WriteLine($"Successfully processed: {processed}");
+            Console.WriteLine($"Errors: {errors}");
+            Console.WriteLine($"Total: {validFiles.Count}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error during batch processing: {ex.Message}");
+        }
+    }
+
+    private static void ManageConfiguration()
+    {
+        while (true)
+        {
+            Console.WriteLine("\n=== Configuration Management ===");
+            Console.WriteLine("1. View current configuration");
+            Console.WriteLine("2. Set database path");
+            Console.WriteLine("3. Create example config file");
+            Console.WriteLine("4. Reload configuration from file");
+            Console.WriteLine("5. Save current configuration");
+            Console.WriteLine("6. Back to main menu");
+            Console.Write("Enter your choice: ");
+
+            string choice = Console.ReadLine()?.Trim() ?? "";
+
+            switch (choice)
+            {
+                case "1":
+                    ViewCurrentConfiguration();
+                    break;
+                case "2":
+                    SetDatabasePath();
+                    break;
+                case "3":
+                    CreateExampleConfigFile();
+                    break;
+                case "4":
+                    ReloadConfiguration();
+                    break;
+                case "5":
+                    SaveCurrentConfiguration();
+                    break;
+                case "6":
+                    ///ShowMainMenu();Should always show on return
+                    return;
+                default:
+                    Console.WriteLine("Invalid option. Please try again.");
+                    break;
+            }
+        }
+    }
+
+    private static void ViewCurrentConfiguration()
+    {
+        if (_config == null)
+        {
+            Console.WriteLine("No configuration loaded.");
+            return;
+        }
+
+        Console.WriteLine("\n=== Current Configuration ===");
+        Console.WriteLine($"Database Path: {_config.DatabasePath ?? "Not set"}");
+        Console.WriteLine($"Auto Create Database: {_config.AutoCreateDatabase}");
+        Console.WriteLine($"Default Target Files Path: {_config.DefaultTargetFilesPath ?? "Not set"}");
+        Console.WriteLine("\nProcessing Settings:");
+        Console.WriteLine($"  Process BOM for Assemblies: {_config.Processing.ProcessBomForAssemblies}");
+        Console.WriteLine($"  Include Custom Properties: {_config.Processing.IncludeCustomProperties}");
+        Console.WriteLine($"  Validate Files Exist: {_config.Processing.ValidateFilesExist}");
+        Console.WriteLine($"  Batch Processing Timeout: {_config.Processing.BatchProcessingTimeout}ms");
+    }
+
+    private static void SetDatabasePath()
+    {
+        Console.Write("Enter database file path: ");
+        string dbPath = Console.ReadLine()?.Trim() ?? "";
+
+        if (string.IsNullOrEmpty(dbPath))
+        {
+            Console.WriteLine("Database path cannot be empty.");
+            return;
+        }
+
+        // Expand relative paths to full paths
+        dbPath = Path.GetFullPath(dbPath);
+
+        if (!dbPath.EndsWith(".db", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine("Adding .db extension...");
+            dbPath += ".db";
+        }
+
+        if (_config == null)
+            _config = ConfigManager.GetCurrentConfig();
+
+        _config.DatabasePath = dbPath;
+        _databasePath = dbPath;
+
+        Console.WriteLine($"Database path set to: {dbPath}");
+
+        if (!File.Exists(dbPath))
+        {
+            Console.Write("Database file doesn't exist. Create it now? (y/n): ");
+            if (Console.ReadLine()?.Trim().ToLower() == "y")
+            {
+                try
+                {
+                    using var dbManager = new SWDatabaseManager(dbPath);
+                    Console.WriteLine("Database created successfully!");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error creating database: {ex.Message}");
+                }
+            }
+        }
+    }
+
+    private static void CreateExampleConfigFile()
+    {
+        Console.Write("Enter path for example config file (or press Enter for 'example-config.json'): ");
+        string configPath = Console.ReadLine()?.Trim() ?? "";
+        
+        if (string.IsNullOrEmpty(configPath))
+            configPath = "example-config.json";
+
+        try
+        {
+            ConfigManager.CreateExampleConfig(configPath);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error creating example config: {ex.Message}");
+        }
+    }
+
+    private static void ReloadConfiguration()
+    {
+        Console.Write("Enter config file path (or press Enter for default): ");
+        string? configPath = Console.ReadLine()?.Trim();
+        
+        if (string.IsNullOrEmpty(configPath))
+            configPath = null; // Use default
+
+        try
+        {
+            _config = ConfigManager.LoadConfig(configPath);
+            if (!string.IsNullOrEmpty(_config.DatabasePath))
+            {
+                _databasePath = _config.DatabasePath;
+            }
+            Console.WriteLine("Configuration reloaded successfully!");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error reloading configuration: {ex.Message}");
+        }
+    }
+
+    private static void SaveCurrentConfiguration()
+    {
+        if (_config == null)
+        {
+            Console.WriteLine("No configuration to save.");
+            return;
+        }
+
+        Console.Write("Enter config file path (or press Enter for default): ");
+        string? configPath = Console.ReadLine()?.Trim();
+        
+        if (string.IsNullOrEmpty(configPath))
+            configPath = null; // Use default
+
+        try
+        {
+            ConfigManager.SaveConfig(_config, configPath);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error saving configuration: {ex.Message}");
         }
     }
 }
