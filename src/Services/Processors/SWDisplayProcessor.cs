@@ -139,6 +139,8 @@ public class SWDisplayProcessor
         }
     }
 
+
+
     private void DisplayBom(SldWorks swApp, string filePath, bool includeSuppressed)
     {
         try
@@ -160,7 +162,7 @@ public class SWDisplayProcessor
         }
     }
 
-    private void DisplayBomFromList(List<BomItem> bomItems, string title)
+    public static void DisplayBomFromList(List<BomItem> bomItems, string title)
     {
         Console.WriteLine($"\n--- {title} ---");
 

@@ -1,10 +1,9 @@
-using System;
 
 /// <summary>
 /// Centralized container for application processors and their shared state.
 /// Handles refreshing instances when configuration or database path changes.
 /// </summary>
-public class ProcessorContext
+public class ProcessManager
 {
     private AppConfig? _config;
     private string? _databasePath;
