@@ -2,44 +2,6 @@ using System;
 using System.IO;
 using System.Text.Json;
 
-/// <summary>
-/// Configuration settings for the SolidWorks Metadata application
-/// </summary>
-public class AppConfig
-{
-    public string? DatabasePath { get; set; }
-    public bool AutoCreateDatabase { get; set; } = true;
-    public string? DefaultTargetFilesPath { get; set; }
-    public string? LogDirectory { get; set; }
-    public ProcessingSettings Processing { get; set; } = new ProcessingSettings();
-    public SolidWorksSettings SolidWorks { get; set; } = new SolidWorksSettings();
-}
-
-/// <summary>
-/// SolidWorks application-specific settings
-/// </summary>
-public class SolidWorksSettings
-{
-    public bool HideUserInterface { get; set; } = true; // swApp.Visible = false
-    public bool DisableUserControl { get; set; } = true; // swApp.UserControl = false
-    public bool UseReadOnlyMode { get; set; } = true; // Opens documents in read-only mode
-    public bool LoadHiddenComponents { get; set; } = false; // Skip hidden components for speed
-    public bool LoadExternalReferencesInMemory { get; set; } = true; // Faster reference loading
-}
-
-/// <summary>
-/// Processing-related configuration settings
-/// </summary>
-public class ProcessingSettings
-{
-    public bool ProcessBomForAssemblies { get; set; } = true;
-    public bool IncludeCustomProperties { get; set; } = true;
-    public bool ValidateFilesExist { get; set; } = true;
-    public int BatchProcessingTimeout { get; set; } = 30000; // milliseconds
-    public int PeriodicCleanupInterval { get; set; } = 10; // files between cleanup
-    public int CleanupDelayMs { get; set; } = 500; // milliseconds to wait during cleanup
-    public int DocumentCloseDelayMs { get; set; } = 200; // milliseconds to wait after document close
-}
 
 /// <summary>
 /// Configuration manager for loading and saving application settings
@@ -147,28 +109,31 @@ public static class ConfigManager
     {
         return new AppConfig
         {
+            // Database Settings
             DatabasePath = Path.Combine(Environment.CurrentDirectory, "swmetadata.db"),
             AutoCreateDatabase = true,
             DefaultTargetFilesPath = null,
+            
+            // Logging Settings
             LogDirectory = Path.Combine(Environment.CurrentDirectory, "logs"),
-            Processing = new ProcessingSettings
-            {
-                ProcessBomForAssemblies = true,
-                IncludeCustomProperties = true,
-                ValidateFilesExist = true,
-                BatchProcessingTimeout = 30000,
-                PeriodicCleanupInterval = 10,
-                CleanupDelayMs = 500,
-                DocumentCloseDelayMs = 200
-            },
-            SolidWorks = new SolidWorksSettings
-            {
-                HideUserInterface = true,
-                DisableUserControl = true,
-                UseReadOnlyMode = true,
-                LoadHiddenComponents = false,
-                LoadExternalReferencesInMemory = true
-            }
+            
+            // Processing Settings
+            ProcessBomForAssemblies = true,
+            IncludeCustomProperties = true,
+            ValidateFilesExist = true,
+            BatchProcessingTimeout = 30000,
+            PeriodicCleanupInterval = 10,
+            
+            // SolidWorks Settings
+            HideUserInterface = true,
+            DisableUserControl = true,
+            UseReadOnlyMode = true,
+            LoadHiddenComponents = false,
+            LoadExternalReferencesInMemory = true,
+            
+            // Cleanup Settings
+            CleanupDelayMs = 500,
+            DocumentCloseDelayMs = 200
         };
     }
 
@@ -180,16 +145,31 @@ public static class ConfigManager
     {
         var exampleConfig = new AppConfig
         {
+            // Database Settings
             DatabasePath = @"C:\SolidWorksData\metadata.db",
             AutoCreateDatabase = true,
             DefaultTargetFilesPath = @"C:\SolidWorksData\target_files.csv",
-            Processing = new ProcessingSettings
-            {
-                ProcessBomForAssemblies = true,
-                IncludeCustomProperties = true,
-                ValidateFilesExist = true,
-                BatchProcessingTimeout = 60000
-            }
+            
+            // Logging Settings
+            LogDirectory = @"C:\SolidWorksData\logs",
+            
+            // Processing Settings
+            ProcessBomForAssemblies = true,
+            IncludeCustomProperties = true,
+            ValidateFilesExist = true,
+            BatchProcessingTimeout = 60000,
+            PeriodicCleanupInterval = 15,
+            
+            // SolidWorks Settings
+            HideUserInterface = true,
+            DisableUserControl = true,
+            UseReadOnlyMode = true,
+            LoadHiddenComponents = false,
+            LoadExternalReferencesInMemory = true,
+            
+            // Cleanup Settings
+            CleanupDelayMs = 1000,
+            DocumentCloseDelayMs = 300
         };
 
         SaveConfig(exampleConfig, filePath);

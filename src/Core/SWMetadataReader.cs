@@ -49,7 +49,7 @@ public static class SWMetadataReader
         finally
         {
             // Close document but keep SolidWorks running for next file
-            CleanupDocument(swApp, swModel);
+            SWDocumentManager.CloseDocumentSafely(swApp, swModel);
         }
 
         return metadata;
@@ -105,39 +105,9 @@ public static class SWMetadataReader
         }
     }
 
-    public static SldWorks CreateSolidWorksInstance()
-    {
-        try
-        {
-            var swAppInstance = Activator.CreateInstance(Type.GetTypeFromProgID("SldWorks.Application")) as SldWorks;
-            if (swAppInstance == null)
-                throw new InvalidOperationException("Failed to create SolidWorks instance");
 
-            return swAppInstance;
-        }
-        catch (COMException)
-        {
-            throw new InvalidOperationException("Failed to connect to SolidWorks. Ensure SolidWorks is installed and properly registered.");
-        }
-    }
 
-    public static void CleanupSolidWorks(SldWorks swApp)
-    {
-        if (swApp == null) return;
 
-        try
-        {
-            swApp.ExitApp();
-            Marshal.ReleaseComObject(swApp);
-            // Force garbage collection to help with COM cleanup
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-        }
-        catch (Exception)
-        {
-            // Ignore cleanup errors
-        }
-    }
 
     private static void ValidateFilePath(string filePath)
     {
@@ -159,16 +129,16 @@ public static class SWMetadataReader
 
     private static ModelDoc2 OpenDocument(SldWorks swApp, string filePath)
     {
-        swDocumentTypes_e docType = GetDocumentType(filePath);
+        swDocumentTypes_e docType = SWDocumentManager.GetDocumentType(filePath);
         int errors = 0, warnings = 0;
 
         Logger.LogDocument($"Attempting to open {docType}: {Path.GetFileName(filePath)}", filePath);
 
         // Use optimized opening options for faster processing and prevent feature template loading
         var openOptions = (int)swOpenDocOptions_e.swOpenDocOptions_Silent |
-                         (int)swOpenDocOptions_e.swOpenDocOptions_ReadOnly |
-                         (int)swOpenDocOptions_e.swOpenDocOptions_DontLoadHiddenComponents |
-                         (int)swOpenDocOptions_e.swOpenDocOptions_LoadExternalReferencesInMemory;
+                        (int)swOpenDocOptions_e.swOpenDocOptions_ReadOnly |
+                        (int)swOpenDocOptions_e.swOpenDocOptions_DontLoadHiddenComponents |
+                        (int)swOpenDocOptions_e.swOpenDocOptions_LoadExternalReferencesInMemory;
 
         // For parts, prevent auto-loading parent assemblies and feature templates which cause hanging
         if (docType == swDocumentTypes_e.swDocPART)
@@ -197,11 +167,7 @@ public static class SWMetadataReader
             try
             {
                 Logger.LogInfo("Cleaning up any partially loaded documents", Path.GetFileName(filePath));
-                swApp.CloseAllDocuments(true); // Force close any hanging documents
-                
-                // Additional cleanup - sometimes SolidWorks needs a moment
-                System.Threading.Thread.Sleep(500);
-                
+                SWDocumentManager.ForceCleanupHangingDocuments(swApp, "Failed document open - ");
                 Logger.LogInfo("Cleanup completed for failed document open", Path.GetFileName(filePath));
             }
             catch (Exception cleanupEx)
@@ -287,7 +253,7 @@ public static class SWMetadataReader
             string modelPath = swModel.GetPathName();
             metadata["FilePath"] = !string.IsNullOrEmpty(modelPath) ? modelPath : originalPath;
             metadata["FileName"] = Path.GetFileName(metadata["FilePath"]);
-            metadata["DocumentType"] = GetDocumentType(originalPath).ToString();
+            metadata["DocumentType"] = SWDocumentManager.GetDocumentType(originalPath).ToString();
             metadata["FileSize"] = new FileInfo(originalPath).Length.ToString() + " bytes";
             metadata["LastModified"] = File.GetLastWriteTime(originalPath).ToString("yyyy-MM-dd HH:mm:ss");
         }
@@ -297,105 +263,9 @@ public static class SWMetadataReader
         }
     }
 
-    private static void CleanupDocument(SldWorks swApp, ModelDoc2? swModel)
-    {
-        if (swModel == null) return;
 
-        try
-        {
-            // Get the full path name which is more reliable for closing documents
-            string pathName = swModel.GetPathName();
-            
-            // Try multiple methods to close the document properly
-            bool docClosed = false;
-            
-            if (!string.IsNullOrEmpty(pathName))
-            {
-                // Method 1: Close by path name (most reliable)
-                try
-                {
-                    swApp.CloseDoc(pathName);
-                    docClosed = true;
-                    Logger.LogDocument($"Document closed successfully: {Path.GetFileName(pathName)}", pathName);
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogWarning($"Failed to close document by path: {ex.Message}", Path.GetFileName(pathName));
-                }
-            }
-            
-            // Method 2: If path method failed, try by title
-            if (!docClosed)
-            {
-                try
-                {
-                    string title = swModel.GetTitle();
-                    if (!string.IsNullOrEmpty(title))
-                    {
-                        swApp.CloseDoc(title);
-                        docClosed = true;
-                        Logger.LogDocument($"Document closed by title: {title}", pathName);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogWarning($"Failed to close document by title: {ex.Message}", pathName);
-                }
-            }
-            
-            // Method 3: Force close all documents if previous methods failed
-            if (!docClosed)
-            {
-                try
-                {
-                    Logger.LogWarning("Attempting to close all documents as fallback", pathName);
-                    swApp.CloseAllDocuments(true); // true = force close without saving
-                    Logger.LogInfo("All documents closed forcefully", pathName);
-                    docClosed = true;
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogError($"Failed to force close documents: {ex.Message}", pathName);
-                }
-            }
-            
-            // Always release COM object regardless of close success
-            Marshal.ReleaseComObject(swModel);
-            
-            // Note: GC calls moved to periodic cleanup in batch processing for better performance
-            
-            if (!docClosed)
-            {
-                Logger.LogWarning("Document may not have been properly closed - check SolidWorks taskbar", pathName);
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError($"Error during document cleanup: {ex.Message}", swModel?.GetPathName());
-            // Still try to release COM object
-            try
-            {
-                Marshal.ReleaseComObject(swModel);
-            }
-            catch
-            {
-                // Final fallback - ignore any errors
-            }
-        }
-    }
 
-    public static swDocumentTypes_e GetDocumentType(string filePath)
-    {
-        string extension = Path.GetExtension(filePath).ToLowerInvariant();
 
-        return extension switch
-        {
-            ".sldprt" => swDocumentTypes_e.swDocPART,
-            ".sldasm" => swDocumentTypes_e.swDocASSEMBLY,
-            ".slddrw" => swDocumentTypes_e.swDocDRAWING,
-            _ => throw new ArgumentException($"Unsupported file extension: {extension}")
-        };
-    }
 
     /// <summary>
     /// Check if a file should be excluded from processing (prevents hanging documents)

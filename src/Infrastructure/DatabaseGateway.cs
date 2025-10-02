@@ -1,15 +1,14 @@
-using System;
-using System.Collections.Generic;
-using System.Data.SQLite;
-using System.IO;
 
-public class SWDatabaseManager : IDisposable
+using System.Data.SQLite;
+
+
+public class DatabaseGateway : IDisposable
 {
     private readonly string _connectionString;
-    private SQLiteConnection _connection;
+    private SQLiteConnection? _connection;
     private bool _disposed = false;
 
-    public SWDatabaseManager(string databasePath)
+    public DatabaseGateway(string databasePath)
     {
         if (string.IsNullOrWhiteSpace(databasePath))
             throw new ArgumentException("Database path cannot be null or empty", nameof(databasePath));
@@ -62,7 +61,8 @@ public class SWDatabaseManager : IDisposable
                 document_type TEXT NOT NULL,
                 file_size INTEGER,
                 last_modified DATETIME,
-                created_date DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (file_path) REFERENCES file_searchid(file_path) ON DELETE CASCADE
             )",
 
             // Custom properties table

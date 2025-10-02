@@ -1,6 +1,4 @@
-using System;
 using SolidWorks.Interop.sldworks;
-using SolidWorks.Interop.swconst;
 
 public class MainClass
 {
@@ -16,7 +14,7 @@ public class MainClass
         try
         {
             Logger.LogRuntime("Initializing SolidWorks connection", "Main");
-            swApp = SWMetadataReader.CreateSolidWorksInstance();
+            swApp = SWDocumentManager.CreateSolidWorksInstance();
             
             // Performance optimizations - disable UI updates and interactions
             swApp.Visible = false;                           // Hide SolidWorks UI window
@@ -36,7 +34,7 @@ public class MainClass
             if (swApp != null)
             {
                 Logger.LogRuntime("Cleaning up SolidWorks connection", "Main");
-                SWMetadataReader.CleanupSolidWorks(swApp);
+                SWDocumentManager.CleanupSolidWorks(swApp);
             }
             Logger.LogRuntime("Application closed", "Main");
             Console.ReadKey();

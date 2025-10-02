@@ -9,7 +9,7 @@ using SolidWorks.Interop.swconst;
 /// </summary>
 public static class Logger
 {
-    private static string _logFilePath = "C:\\Users\\alexanderd\\source\\repos\\DelgLe\\SWMetaData\\src\\sw.log";
+    private static string _logFilePath = "C:\\Users\\alexanderd\\source\\repos\\DelgLe\\SWMetaData\\logs\\sw.log";
     private static readonly object _lockObject = new object();
     private static bool _isInitialized = false;
 
