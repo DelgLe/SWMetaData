@@ -27,6 +27,18 @@ public class SWDatabaseManager : IDisposable
         {
             _connection = new SQLiteConnection(_connectionString);
             _connection.Open();
+            
+            // Enable foreign key constraints
+            using var enableFkCommand = new SQLiteCommand("PRAGMA foreign_keys = ON;", _connection);
+            enableFkCommand.ExecuteNonQuery();
+            
+            // Optimize database performance
+            using var cacheSizeCommand = new SQLiteCommand("PRAGMA cache_size = 10000;", _connection);
+            cacheSizeCommand.ExecuteNonQuery();
+            
+            using var pageSizeCommand = new SQLiteCommand("PRAGMA page_size = 4096;", _connection);
+            pageSizeCommand.ExecuteNonQuery();
+            
             CreateTables();
         }
         catch (Exception ex)
@@ -44,7 +56,7 @@ public class SWDatabaseManager : IDisposable
         {
             // Assembly/Part metadata table
             @"CREATE TABLE IF NOT EXISTS sw_documents (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                DocID INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_path TEXT NOT NULL UNIQUE,
                 file_name TEXT NOT NULL,
                 document_type TEXT NOT NULL,
@@ -55,18 +67,18 @@ public class SWDatabaseManager : IDisposable
 
             // Custom properties table
             @"CREATE TABLE IF NOT EXISTS sw_custom_properties (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                document_id INTEGER NOT NULL,
+                property_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                DocID INTEGER NOT NULL,
                 property_name TEXT NOT NULL,
                 property_value TEXT,
-                FOREIGN KEY (document_id) REFERENCES sw_documents (id) ON DELETE CASCADE,
-                UNIQUE(document_id, property_name)
+                FOREIGN KEY (DocID) REFERENCES sw_documents (DocID) ON DELETE CASCADE,
+                UNIQUE(DocID, property_name)
             )",
 
             // BOM items table
             @"CREATE TABLE IF NOT EXISTS sw_bom_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                parent_assembly_id INTEGER NOT NULL,
+                bom_item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Parent_DocID INTEGER NOT NULL,
                 component_name TEXT NOT NULL,
                 file_name TEXT NOT NULL,
                 file_path TEXT NOT NULL,
@@ -76,32 +88,31 @@ public class SWDatabaseManager : IDisposable
                 is_suppressed BOOLEAN DEFAULT 0,
                 suppression_state TEXT,
                 created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (parent_assembly_id) REFERENCES sw_documents (id) ON DELETE CASCADE
+                FOREIGN KEY (Parent_DocID) REFERENCES sw_documents (DocID) ON DELETE CASCADE
             )",
 
             // Configurations table
             @"CREATE TABLE IF NOT EXISTS sw_configurations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                document_id INTEGER NOT NULL,
+                configuration_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                DocID INTEGER NOT NULL,
                 configuration_name TEXT NOT NULL,
-                FOREIGN KEY (document_id) REFERENCES sw_documents (id) ON DELETE CASCADE,
-                UNIQUE(document_id, configuration_name)
+                FOREIGN KEY (DocID) REFERENCES sw_documents (DocID) ON DELETE CASCADE,
+                UNIQUE(DocID, configuration_name)
             )",
 
             // Materials table
             @"CREATE TABLE IF NOT EXISTS sw_materials (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                document_id INTEGER NOT NULL,
+                DocID INTEGER PRIMARY KEY ,
                 material_name TEXT NOT NULL,
-                FOREIGN KEY (document_id) REFERENCES sw_documents (id) ON DELETE CASCADE
+                FOREIGN KEY (DocID) REFERENCES sw_documents (DocID) ON DELETE CASCADE
             )",
 
             // Create indexes for better performance
             @"CREATE INDEX IF NOT EXISTS idx_documents_filepath ON sw_documents(file_path)",
-            @"CREATE INDEX IF NOT EXISTS idx_custom_props_docid ON sw_custom_properties(document_id)",
-            @"CREATE INDEX IF NOT EXISTS idx_bom_items_assembly ON sw_bom_items(parent_assembly_id)",
-            @"CREATE INDEX IF NOT EXISTS idx_configurations_docid ON sw_configurations(document_id)",
-            @"CREATE INDEX IF NOT EXISTS idx_materials_docid ON sw_materials(document_id)"
+            @"CREATE INDEX IF NOT EXISTS idx_custom_props_docid ON sw_custom_properties(DocID)",
+            @"CREATE INDEX IF NOT EXISTS idx_Parent_DocID ON sw_bom_items(Parent_DocID)",
+            @"CREATE INDEX IF NOT EXISTS idx_configurations_docid ON sw_configurations(DocID)",
+            @"CREATE INDEX IF NOT EXISTS idx_materials_docid ON sw_materials(DocID)"
         };
 
         foreach (string commandText in commands)
@@ -182,7 +193,7 @@ public class SWDatabaseManager : IDisposable
             // Insert new BOM items
             const string sql = @"
                 INSERT INTO sw_bom_items 
-                (parent_assembly_id, component_name, file_name, file_path, configuration, 
+                (Parent_DocID, component_name, file_name, file_path, configuration, 
                  quantity, level, is_suppressed, suppression_state)
                 VALUES (@assemblyId, @componentName, @fileName, @filePath, @configuration, 
                         @quantity, @level, @isSuppressed, @suppressionState)";
@@ -240,7 +251,7 @@ public class SWDatabaseManager : IDisposable
             SELECT component_name, file_name, file_path, configuration, 
                    quantity, level, is_suppressed, suppression_state
             FROM sw_bom_items 
-            WHERE parent_assembly_id = @assemblyId
+            WHERE Parent_DocID = @assemblyId
             ORDER BY level, component_name";
 
         var bomItems = new List<BomItem>();
@@ -288,7 +299,7 @@ public class SWDatabaseManager : IDisposable
         const string sql = @"
             SELECT d.*, p.property_name, p.property_value
             FROM sw_documents d
-            LEFT JOIN sw_custom_properties p ON d.id = p.document_id
+            LEFT JOIN sw_custom_properties p ON d.DocID = p.DocID
             WHERE d.file_path = @filePath";
 
         var metadata = new Dictionary<string, string>();
@@ -514,7 +525,7 @@ public class SWDatabaseManager : IDisposable
     {
         // Clear existing custom properties
         using (var deleteCommand = new SQLiteCommand(
-            "DELETE FROM sw_custom_properties WHERE document_id = @documentId", _connection))
+            "DELETE FROM sw_custom_properties WHERE DocID = @documentId", _connection))
         {
             deleteCommand.Parameters.AddWithValue("@documentId", documentId);
             deleteCommand.ExecuteNonQuery();
@@ -528,7 +539,7 @@ public class SWDatabaseManager : IDisposable
         };
 
         const string sql = @"
-            INSERT INTO sw_custom_properties (document_id, property_name, property_value)
+            INSERT INTO sw_custom_properties (DocID, property_name, property_value)
             VALUES (@documentId, @propertyName, @propertyValue)";
 
         using var command = new SQLiteCommand(sql, _connection);
@@ -555,7 +566,7 @@ public class SWDatabaseManager : IDisposable
 
         // Clear existing configurations
         using (var deleteCommand = new SQLiteCommand(
-            "DELETE FROM sw_configurations WHERE document_id = @documentId", _connection))
+            "DELETE FROM sw_configurations WHERE DocID = @documentId", _connection))
         {
             deleteCommand.Parameters.AddWithValue("@documentId", documentId);
             deleteCommand.ExecuteNonQuery();
@@ -564,7 +575,7 @@ public class SWDatabaseManager : IDisposable
         // Insert configurations
         string[] configurations = configurationsString.Split(',');
         const string sql = @"
-            INSERT INTO sw_configurations (document_id, configuration_name)
+            INSERT INTO sw_configurations (DocID, configuration_name)
             VALUES (@documentId, @configurationName)";
 
         using var command = new SQLiteCommand(sql, _connection);
@@ -590,7 +601,7 @@ public class SWDatabaseManager : IDisposable
 
         // Clear existing material
         using (var deleteCommand = new SQLiteCommand(
-            "DELETE FROM sw_materials WHERE document_id = @documentId", _connection))
+            "DELETE FROM sw_materials WHERE DocID = @documentId", _connection))
         {
             deleteCommand.Parameters.AddWithValue("@documentId", documentId);
             deleteCommand.ExecuteNonQuery();
@@ -598,7 +609,7 @@ public class SWDatabaseManager : IDisposable
 
         // Insert material
         const string sql = @"
-            INSERT INTO sw_materials (document_id, material_name)
+            INSERT INTO sw_materials (DocID, material_name)
             VALUES (@documentId, @materialName)";
 
         using var command = new SQLiteCommand(sql, _connection);
@@ -609,7 +620,7 @@ public class SWDatabaseManager : IDisposable
 
     private long GetDocumentId(string filePath)
     {
-        const string sql = "SELECT id FROM sw_documents WHERE file_path = @filePath";
+        const string sql = "SELECT DocID FROM sw_documents WHERE file_path = @filePath";
 
         using var command = new SQLiteCommand(sql, _connection);
         command.Parameters.AddWithValue("@filePath", filePath);
@@ -620,7 +631,7 @@ public class SWDatabaseManager : IDisposable
 
     private void ClearBomItems(long assemblyId)
     {
-        const string sql = "DELETE FROM sw_bom_items WHERE parent_assembly_id = @assemblyId";
+        const string sql = "DELETE FROM sw_bom_items WHERE Parent_DocID = @assemblyId";
 
         using var command = new SQLiteCommand(sql, _connection);
         command.Parameters.AddWithValue("@assemblyId", assemblyId);

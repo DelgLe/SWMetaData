@@ -24,7 +24,7 @@ public static class CommandInterface
                 int docCount = swApp.GetDocumentCount();
                 if (docCount > 0)
                 {
-                    Console.WriteLine($"Warning: Found {docCount} potentially hanging documents, cleaning up...");
+                    Logger.LogWarning($"Found {docCount} potentially hanging documents, cleaning up", "InitialCleanup");
                     swApp.CloseAllDocuments(true);
                     System.Threading.Thread.Sleep(200);
                     GC.Collect();
@@ -33,7 +33,7 @@ public static class CommandInterface
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Warning during hanging document cleanup: {ex.Message}");
+                Logger.LogWarning($"Warning during hanging document cleanup: {ex.Message}", "InitialCleanup");
             }
             return;
         }
@@ -47,38 +47,36 @@ public static class CommandInterface
                 try
                 {
                     swApp.CloseDoc(pathName);
-                    Console.WriteLine($"Document closed: {Path.GetFileName(pathName)}");
+                    Logger.LogDocument($"Document closed: {Path.GetFileName(pathName)}", pathName);
                     return;
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Failed to close by path: {ex.Message}");
+                    Logger.LogWarning($"Failed to close by path: {ex.Message}", Path.GetFileName(pathName));
                 }
             }
 
             // Method 2: Try to close by title
-            try
-            {
-                string title = swModel.GetTitle();
-                if (!string.IsNullOrEmpty(title))
+                try
                 {
-                    swApp.CloseDoc(title);
-                    Console.WriteLine($"Document closed by title: {title}");
-                    return;
+                    string title = swModel.GetTitle();
+                    if (!string.IsNullOrEmpty(title))
+                    {
+                        swApp.CloseDoc(title);
+                        Logger.LogDocument($"Document closed by title: {title}", pathName);
+                        return;
+                    }
                 }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Failed to close by title: {ex.Message}");
-            }
-
-            // Method 3: Force close all documents as last resort
-            Console.WriteLine("Warning: Forcing close of all documents...");
+                catch (Exception ex)
+                {
+                    Logger.LogWarning($"Failed to close by title: {ex.Message}", pathName);
+                }            // Method 3: Force close all documents as last resort
+            Logger.LogWarning("Forcing close of all documents", pathName);
             swApp.CloseAllDocuments(true);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error closing document: {ex.Message}");
+            Logger.LogError($"Error closing document: {ex.Message}", swModel?.GetPathName());
         }
     }
 
@@ -92,7 +90,11 @@ public static class CommandInterface
             int docCount = swApp.GetDocumentCount();
             if (docCount > 0)
             {
-                Console.WriteLine($"{context}Forcing cleanup of {docCount} hanging document(s)...");
+                Logger.LogRuntime("ForceCleanupHangingDocuments started", context, $"Document count: {docCount}");
+                
+                // Log all hanging documents before cleanup
+                Logger.LogHangingDocuments(swApp, context);
+                
                 swApp.CloseAllDocuments(true); // Force close without saving
                 
                 // Give SolidWorks a moment to clean up
@@ -103,32 +105,45 @@ public static class CommandInterface
                 GC.WaitForPendingFinalizers();
                 GC.Collect();
                 
+                // Log the cleanup result
+                Logger.LogCloseAllDocumentsResult(swApp, docCount, context);
+                
                 // Verify cleanup
                 int remainingDocs = swApp.GetDocumentCount();
                 if (remainingDocs == 0)
                 {
-                    Console.WriteLine($"{context}Successfully cleaned up hanging documents");
+                    Logger.LogInfo($"{context}Successfully cleaned up hanging documents", context);
                 }
                 else
                 {
-                    Console.WriteLine($"{context}Warning: {remainingDocs} document(s) still hanging after cleanup");
+                    Logger.LogWarning($"{context}Warning: {remainingDocs} document(s) still hanging after cleanup", context);
                 }
+            }
+            else
+            {
+                Logger.LogInfo("No hanging documents found", context);
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"{context}Error during hanging document cleanup: {ex.Message}");
+            Logger.LogException(ex, $"ForceCleanupHangingDocuments - {context}");
         }
     }
 
     public static void RunInteractiveLoop(SldWorks swApp)
     {
-        // Load configuration
+        // Load configuration first
         _config = ConfigManager.LoadConfig();
+        
+        // Initialize logger with config
+        Logger.Initialize(_config);
+        Logger.LogRuntime("Application started", "RunInteractiveLoop");
+        
         if (!string.IsNullOrEmpty(_config.DatabasePath))
         {
             _databasePath = _config.DatabasePath;
             Console.WriteLine($"Using database from config: {_databasePath}");
+            Logger.LogInfo("Database path loaded from config", _databasePath);
         }
 
         // Show initial options
@@ -149,6 +164,7 @@ public static class CommandInterface
             if (input.Equals("exit", StringComparison.OrdinalIgnoreCase) || input == "7")
             {
                 Console.WriteLine("Exiting application...");
+                Logger.LogRuntime("Application exit requested", "User input");
                 break;
             }
 
@@ -906,20 +922,26 @@ public static class CommandInterface
 
         try
         {
+            Logger.LogRuntime("Batch processing started", "ProcessAllTargetFiles");
             using var dbManager = new SWDatabaseManager(_databasePath);
             var validFiles = dbManager.GetValidTargetFiles();
 
             if (validFiles.Count == 0)
             {
                 Console.WriteLine("No valid target files found to process.");
+                Logger.LogInfo("No valid target files found to process", "ProcessAllTargetFiles");
                 return;
             }
 
             Console.WriteLine($"Found {validFiles.Count} valid target files to process.");
+            Logger.LogInfo($"Found {validFiles.Count} valid target files to process", "ProcessAllTargetFiles");
             Console.Write("Continue with batch processing? (y/n): ");
             
             if (Console.ReadLine()?.Trim().ToLower() != "y")
+            {
+                Logger.LogInfo("Batch processing cancelled by user", "ProcessAllTargetFiles");
                 return;
+            }
 
             int processed = 0;
             int errors = 0;
@@ -1013,10 +1035,13 @@ public static class CommandInterface
             Console.WriteLine($"Successfully processed: {processed}");
             Console.WriteLine($"Errors: {errors}");
             Console.WriteLine($"Total: {validFiles.Count}");
+            
+            Logger.LogInfo($"Batch processing complete - Processed: {processed}, Errors: {errors}, Total: {validFiles.Count}", "ProcessAllTargetFiles");
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Error during batch processing: {ex.Message}");
+            Logger.LogException(ex, "ProcessAllTargetFiles - Batch processing failed");
         }
     }
 

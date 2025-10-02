@@ -20,9 +20,8 @@ public static class SWMetadataReader
         try
         {
             // Open document
-            Console.WriteLine("Reading input...");
+            Logger.LogDocument($"Starting document read: {Path.GetFileName(filePath)}", filePath);
             swModel = OpenDocument(swApp, filePath);
-
 
             // Read all metadata
             ReadCustomProperties(swModel, metadata);
@@ -31,13 +30,17 @@ public static class SWMetadataReader
             ReadConfigurations(swModel, metadata);
             ReadMaterialInfo(swModel, metadata);
             ReadComponentInfo(swModel, metadata);
+            
+            Logger.LogDocument($"Metadata read complete - {metadata.Count} properties", filePath);
         }
         catch (COMException comEx)
         {
+            Logger.LogException(comEx, $"SolidWorks COM error - {Path.GetFileName(filePath)}");
             throw new Exception($"SolidWorks COM error: {comEx.Message} (HRESULT: 0x{comEx.HResult:X8})", comEx);
         }
         catch (Exception ex)
         {
+            Logger.LogException(ex, $"Error reading metadata - {Path.GetFileName(filePath)}");
             throw new Exception($"Error reading metadata: {ex.Message}", ex);
         }
         finally
@@ -151,7 +154,7 @@ public static class SWMetadataReader
         swDocumentTypes_e docType = GetDocumentType(filePath);
         int errors = 0, warnings = 0;
 
-        Console.WriteLine($"Attempting to open {docType}: {Path.GetFileName(filePath)}");
+        Logger.LogDocument($"Attempting to open {docType}: {Path.GetFileName(filePath)}", filePath);
 
         ModelDoc2 swModel = swApp.OpenDoc6(filePath, (int)docType,
             (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings);
@@ -160,12 +163,15 @@ public static class SWMetadataReader
         {
             // For failed opens, especially assemblies, SolidWorks might still have 
             // partially loaded documents that need cleanup
-            Console.WriteLine($"Document failed to open: {Path.GetFileName(filePath)} (Errors: {errors}, Warnings: {warnings})");
+            Logger.LogWarning($"Document failed to open: {Path.GetFileName(filePath)} (Errors: {errors}, Warnings: {warnings})", Path.GetFileName(filePath));
+            
+            // Log hanging documents before cleanup
+            Logger.LogHangingDocuments(swApp, "Failed document open - ");
             
             // Force cleanup of any partially loaded documents
             try
             {
-                Console.WriteLine("Cleaning up any partially loaded documents...");
+                Logger.LogInfo("Cleaning up any partially loaded documents", Path.GetFileName(filePath));
                 swApp.CloseAllDocuments(true); // Force close any hanging documents
                 
                 // Additional cleanup - sometimes SolidWorks needs a moment
@@ -176,11 +182,11 @@ public static class SWMetadataReader
                 GC.WaitForPendingFinalizers();
                 GC.Collect();
                 
-                Console.WriteLine("Cleanup completed for failed document open");
+                Logger.LogInfo("Cleanup completed for failed document open", Path.GetFileName(filePath));
             }
             catch (Exception cleanupEx)
             {
-                Console.WriteLine($"Warning: Cleanup after failed open had issues: {cleanupEx.Message}");
+                Logger.LogWarning($"Cleanup after failed open had issues: {cleanupEx.Message}", Path.GetFileName(filePath));
             }
 
             string errorMsg = $"Failed to open document: {Path.GetFileName(filePath)}";
@@ -189,7 +195,7 @@ public static class SWMetadataReader
             throw new InvalidOperationException(errorMsg);
         }
 
-        Console.WriteLine($"Successfully opened: {Path.GetFileName(filePath)}");
+        Logger.LogDocument($"Successfully opened: {Path.GetFileName(filePath)}", filePath);
         return swModel;
     }
 
@@ -290,11 +296,11 @@ public static class SWMetadataReader
                 {
                     swApp.CloseDoc(pathName);
                     docClosed = true;
-                    Console.WriteLine($"Document closed successfully: {Path.GetFileName(pathName)}");
+                    Logger.LogDocument($"Document closed successfully: {Path.GetFileName(pathName)}", pathName);
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Failed to close document by path: {ex.Message}");
+                    Logger.LogWarning($"Failed to close document by path: {ex.Message}", Path.GetFileName(pathName));
                 }
             }
             
@@ -308,12 +314,12 @@ public static class SWMetadataReader
                     {
                         swApp.CloseDoc(title);
                         docClosed = true;
-                        Console.WriteLine($"Document closed by title: {title}");
+                        Logger.LogDocument($"Document closed by title: {title}", pathName);
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Failed to close document by title: {ex.Message}");
+                    Logger.LogWarning($"Failed to close document by title: {ex.Message}", pathName);
                 }
             }
             
@@ -322,14 +328,14 @@ public static class SWMetadataReader
             {
                 try
                 {
-                    Console.WriteLine("Warning: Attempting to close all documents as fallback...");
+                    Logger.LogWarning("Attempting to close all documents as fallback", pathName);
                     swApp.CloseAllDocuments(true); // true = force close without saving
-                    Console.WriteLine("All documents closed forcefully");
+                    Logger.LogInfo("All documents closed forcefully", pathName);
                     docClosed = true;
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Failed to force close documents: {ex.Message}");
+                    Logger.LogError($"Failed to force close documents: {ex.Message}", pathName);
                 }
             }
             
@@ -343,12 +349,12 @@ public static class SWMetadataReader
             
             if (!docClosed)
             {
-                Console.WriteLine("Warning: Document may not have been properly closed - check SolidWorks taskbar");
+                Logger.LogWarning("Document may not have been properly closed - check SolidWorks taskbar", pathName);
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error during document cleanup: {ex.Message}");
+            Logger.LogError($"Error during document cleanup: {ex.Message}", swModel?.GetPathName());
             // Still try to release COM object
             try
             {

@@ -10,6 +10,7 @@ public class AppConfig
     public string? DatabasePath { get; set; }
     public bool AutoCreateDatabase { get; set; } = true;
     public string? DefaultTargetFilesPath { get; set; }
+    public string? LogDirectory { get; set; }
     public ProcessingSettings Processing { get; set; } = new ProcessingSettings();
 }
 
@@ -29,7 +30,7 @@ public class ProcessingSettings
 /// </summary>
 public static class ConfigManager
 {
-    private const string DefaultConfigFileName = "C:\\Users\\alexanderd\\Source\\Repos\\DelgLe\\SWMetaData\\swmetadata-config.json";
+    private const string DefaultConfigFilePath = "C:\\Users\\alexanderd\\Source\\Repos\\DelgLe\\SWMetaData\\swmetadata-config.json";
     private static AppConfig? _currentConfig;
 
     /// <summary>
@@ -39,7 +40,7 @@ public static class ConfigManager
     /// <returns>Loaded configuration</returns>
     public static AppConfig LoadConfig(string? configPath = null)
     {
-        configPath ??= DefaultConfigFileName;
+        configPath ??= DefaultConfigFilePath;
 
         if (!File.Exists(configPath))
         {
@@ -93,7 +94,7 @@ public static class ConfigManager
     /// <param name="configPath">Path to save config file (optional, uses default if not provided)</param>
     public static void SaveConfig(AppConfig config, string? configPath = null)
     {
-        configPath ??= DefaultConfigFileName;
+        configPath ??= DefaultConfigFilePath;
 
         try
         {
@@ -133,6 +134,7 @@ public static class ConfigManager
             DatabasePath = Path.Combine(Environment.CurrentDirectory, "swmetadata.db"),
             AutoCreateDatabase = true,
             DefaultTargetFilesPath = null,
+            LogDirectory = Path.Combine(Environment.CurrentDirectory, "logs"),
             Processing = new ProcessingSettings
             {
                 ProcessBomForAssemblies = true,
