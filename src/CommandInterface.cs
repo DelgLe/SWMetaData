@@ -132,18 +132,14 @@ public static class CommandInterface
 
     public static void RunInteractiveLoop(SldWorks swApp)
     {
-        // Load configuration first
-        _config = ConfigManager.LoadConfig();
-        
-        // Initialize logger with config
-        Logger.Initialize(_config);
+        // Get current configuration (already loaded in Main)
+        _config = ConfigManager.GetCurrentConfig();
         Logger.LogRuntime("Application started", "RunInteractiveLoop");
         
         if (!string.IsNullOrEmpty(_config.DatabasePath))
         {
             _databasePath = _config.DatabasePath;
-            Console.WriteLine($"Using database from config: {_databasePath}");
-            Logger.LogInfo("Database path loaded from config", _databasePath);
+            Logger.LogRuntime("Database path loaded from config", _databasePath);
         }
 
         // Show initial options
@@ -163,7 +159,6 @@ public static class CommandInterface
 
             if (input.Equals("exit", StringComparison.OrdinalIgnoreCase) || input == "7")
             {
-                Console.WriteLine("Exiting application...");
                 Logger.LogRuntime("Application exit requested", "User input");
                 break;
             }
@@ -323,24 +318,18 @@ public static class CommandInterface
                     Console.WriteLine("Tables initialized:");
                 }
                 
-                Console.WriteLine("  - sw_documents (document metadata)");
-                Console.WriteLine("  - sw_custom_properties (custom properties)");
-                Console.WriteLine("  - sw_bom_items (bill of materials)");
-                Console.WriteLine("  - sw_configurations (part/assembly configurations)");
-                Console.WriteLine("  - sw_materials (material information)");
-                Console.WriteLine("  - target_files (target files for batch processing)");
                 
                 // Check if target_files has existing data
                 int targetFileCount = dbManager.GetTargetFileCount();
                 if (targetFileCount > 0)
                 {
-                    Console.WriteLine($"Found {targetFileCount} existing target files in database.");
+                    Logger.LogInfo($"Found {targetFileCount} existing target files in database.");
                 }
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error setting up config database: {ex.Message}");
+            Logger.LogError($"Error setting up config database: {ex.Message}");
             _databasePath = null;
         }
     }
@@ -352,7 +341,7 @@ public static class CommandInterface
 
         if (string.IsNullOrEmpty(dbName))
         {
-            Console.WriteLine("Database name cannot be empty.");
+            Logger.LogWarning("Database name cannot be empty.");
             return;
         }
 
@@ -381,14 +370,9 @@ public static class CommandInterface
             {
                 _databasePath = newDbPath;
                 
-                Console.WriteLine($"Database created successfully: {newDbPath}");
-                Console.WriteLine("Tables initialized:");
-                Console.WriteLine("  - sw_documents (document metadata)");
-                Console.WriteLine("  - sw_custom_properties (custom properties)");
-                Console.WriteLine("  - sw_bom_items (bill of materials)");
-                Console.WriteLine("  - sw_configurations (part/assembly configurations)");
-                Console.WriteLine("  - sw_materials (material information)");
-                Console.WriteLine("  - target_files (target files for batch processing)");
+                Logger.LogInfo($"Database created successfully: {newDbPath}");
+                Logger.LogInfo("Tables initialized:");
+
             }
             
             // Ask if user wants to update config
@@ -404,7 +388,7 @@ public static class CommandInterface
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error creating database: {ex.Message}");
+            Logger.LogError($"Error creating database: {ex.Message}");
             _databasePath = null;
         }
     }
@@ -413,7 +397,7 @@ public static class CommandInterface
     {
         if (string.IsNullOrEmpty(_databasePath))
         {
-            Console.WriteLine("No database configured. Please setup database first (option 2).");
+            Logger.LogWarning("No database configured. Please setup database first (option 2).");
             return;
         }
 
@@ -428,7 +412,7 @@ public static class CommandInterface
 
         try
         {
-            Console.WriteLine("Reading metadata from SolidWorks file...");
+            Logger.LogInfo("Reading metadata from SolidWorks file...");
             var metadata = SWMetadataReader.ReadMetadata(swApp, filePath);
             
             // Display the metadata
@@ -453,7 +437,7 @@ public static class CommandInterface
                     int errors = 0, warnings = 0;
                     
                     swDocumentTypes_e documentType = SWMetadataReader.GetDocumentType(filePath);
-                    Console.WriteLine($"Opening {documentType} for BOM processing: {Path.GetFileName(filePath)}");
+                    Logger.LogInfo($"Opening {documentType} for BOM processing: {Path.GetFileName(filePath)}");
                     
                     swModel = swApp.OpenDoc6(filePath, (int)documentType,
                         (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings);
@@ -464,7 +448,7 @@ public static class CommandInterface
                         if (bomItems.Count > 0)
                         {
                             dbManager.InsertBomItems(filePath, bomItems);
-                            Console.WriteLine($"Saved {bomItems.Count} BOM items to database");
+                            Logger.LogInfo($"Saved {bomItems.Count} BOM items to database");
                             
                             // Offer to display BOM
                             Console.Write("Display BOM? (y/n): ");
@@ -475,7 +459,7 @@ public static class CommandInterface
                         }
                         else
                         {
-                            Console.WriteLine("No BOM items found in assembly");
+                            Logger.LogWarning("No BOM items found in assembly");
                         }
                     }
                     else
@@ -632,7 +616,7 @@ public static class CommandInterface
             int errors = 0, warnings = 0;
             
             swDocumentTypes_e docType = SWMetadataReader.GetDocumentType(filePath);
-            Console.WriteLine($"Opening {docType} for BOM display: {Path.GetFileName(filePath)}");
+            Logger.WriteAndLogUserMessage($"Opening {docType} for BOM display: {Path.GetFileName(filePath)}");
             
             swModel = swApp.OpenDoc6(filePath, (int)docType,
                 (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings);
@@ -889,10 +873,10 @@ public static class CommandInterface
             var allFiles = dbManager.GetTargetFiles();
             var validFiles = dbManager.GetValidTargetFiles();
 
-            Console.WriteLine($"\nValidation Results:");
-            Console.WriteLine($"Total target files: {allFiles.Count}");
-            Console.WriteLine($"Valid files (exist on disk): {validFiles.Count}");
-            Console.WriteLine($"Missing files: {allFiles.Count - validFiles.Count}");
+            Logger.WriteAndLogUserMessage($"\nValidation Results:");
+            Logger.WriteAndLogUserMessage($"Total target files: {allFiles.Count}");
+            Logger.WriteAndLogUserMessage($"Valid files (exist on disk): {validFiles.Count}");
+            Logger.WriteAndLogUserMessage($"Missing files: {allFiles.Count - validFiles.Count}");
 
             if (allFiles.Count != validFiles.Count)
             {
@@ -916,7 +900,7 @@ public static class CommandInterface
     {
         if (string.IsNullOrEmpty(_databasePath))
         {
-            Console.WriteLine("No database configured. Please setup database first (option 2).");
+            Logger.WriteAndLogUserMessage("No database configured. Please setup database first (option 2).");
             return;
         }
 
@@ -928,12 +912,10 @@ public static class CommandInterface
 
             if (validFiles.Count == 0)
             {
-                Console.WriteLine("No valid target files found to process.");
                 Logger.LogInfo("No valid target files found to process", "ProcessAllTargetFiles");
                 return;
             }
 
-            Console.WriteLine($"Found {validFiles.Count} valid target files to process.");
             Logger.LogInfo($"Found {validFiles.Count} valid target files to process", "ProcessAllTargetFiles");
             Console.Write("Continue with batch processing? (y/n): ");
             
@@ -956,6 +938,14 @@ public static class CommandInterface
                     {
                         Console.WriteLine("Skipping - no file path");
                         errors++;
+                        continue;
+                    }
+                    
+                    // Check if file should be excluded (prevents hanging from feature templates, etc.)
+                    if (SWMetadataReader.IsFileExcluded(targetFile.FilePath))
+                    {
+                        Logger.LogInfo($"Skipped excluded file: {targetFile.FileName}", Path.GetExtension(targetFile.FilePath));
+                        errors++; // Count as error to track exclusions
                         continue;
                     }
 
@@ -1019,6 +1009,7 @@ public static class CommandInterface
                     if (processed % 10 == 0)
                     {
                         ForceCleanupHangingDocuments(swApp, $"  Periodic cleanup after {processed} files - ");
+                        SWMetadataReader.PeriodicCleanup(processed, "BatchProcessing");
                     }
                 }
                 catch (Exception ex)
@@ -1028,19 +1019,25 @@ public static class CommandInterface
                     
                     // Force cleanup after errors to prevent hanging documents
                     ForceCleanupHangingDocuments(swApp, "  Error cleanup - ");
+                    
+                    // Also perform periodic cleanup on errors to prevent accumulation
+                    SWMetadataReader.PeriodicCleanup(processed + errors, "ErrorHandling");
                 }
             }
 
-            Console.WriteLine($"\n=== Batch Processing Complete ===");
-            Console.WriteLine($"Successfully processed: {processed}");
-            Console.WriteLine($"Errors: {errors}");
-            Console.WriteLine($"Total: {validFiles.Count}");
-            
+            Logger.WriteAndLogUserMessage($"\n=== Batch Processing Complete ===");
+            Logger.WriteAndLogUserMessage($"Successfully processed: {processed}");
+            Logger.WriteAndLogUserMessage($"Errors: {errors}");
+            Logger.WriteAndLogUserMessage($"Total: {validFiles.Count}");
+
             Logger.LogInfo($"Batch processing complete - Processed: {processed}, Errors: {errors}, Total: {validFiles.Count}", "ProcessAllTargetFiles");
+            
+            // Log excluded file types for reference
+            var excludedTypes = SWMetadataReader.GetExcludedExtensions();
+            Logger.LogInfo($"Excluded file types: {string.Join(", ", excludedTypes)}", "ProcessAllTargetFiles");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error during batch processing: {ex.Message}");
             Logger.LogException(ex, "ProcessAllTargetFiles - Batch processing failed");
         }
     }
@@ -1180,7 +1177,7 @@ public static class CommandInterface
 
         try
         {
-            _config = ConfigManager.LoadConfig(configPath);
+            _config = ConfigManager.LoadConfigFromJSON(configPath);
             if (!string.IsNullOrEmpty(_config.DatabasePath))
             {
                 _databasePath = _config.DatabasePath;

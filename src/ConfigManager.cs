@@ -12,6 +12,19 @@ public class AppConfig
     public string? DefaultTargetFilesPath { get; set; }
     public string? LogDirectory { get; set; }
     public ProcessingSettings Processing { get; set; } = new ProcessingSettings();
+    public SolidWorksSettings SolidWorks { get; set; } = new SolidWorksSettings();
+}
+
+/// <summary>
+/// SolidWorks application-specific settings
+/// </summary>
+public class SolidWorksSettings
+{
+    public bool HideUserInterface { get; set; } = true; // swApp.Visible = false
+    public bool DisableUserControl { get; set; } = true; // swApp.UserControl = false
+    public bool UseReadOnlyMode { get; set; } = true; // Opens documents in read-only mode
+    public bool LoadHiddenComponents { get; set; } = false; // Skip hidden components for speed
+    public bool LoadExternalReferencesInMemory { get; set; } = true; // Faster reference loading
 }
 
 /// <summary>
@@ -23,6 +36,9 @@ public class ProcessingSettings
     public bool IncludeCustomProperties { get; set; } = true;
     public bool ValidateFilesExist { get; set; } = true;
     public int BatchProcessingTimeout { get; set; } = 30000; // milliseconds
+    public int PeriodicCleanupInterval { get; set; } = 10; // files between cleanup
+    public int CleanupDelayMs { get; set; } = 500; // milliseconds to wait during cleanup
+    public int DocumentCloseDelayMs { get; set; } = 200; // milliseconds to wait after document close
 }
 
 /// <summary>
@@ -38,7 +54,7 @@ public static class ConfigManager
     /// </summary>
     /// <param name="configPath">Path to config file (optional, uses default if not provided)</param>
     /// <returns>Loaded configuration</returns>
-    public static AppConfig LoadConfig(string? configPath = null)
+    public static AppConfig LoadConfigFromJSON(string? configPath = null)
     {
         configPath ??= DefaultConfigFilePath;
 
@@ -121,7 +137,7 @@ public static class ConfigManager
     /// </summary>
     public static AppConfig GetCurrentConfig()
     {
-        return _currentConfig ?? LoadConfig();
+        return _currentConfig ?? LoadConfigFromJSON();
     }
 
     /// <summary>
@@ -140,7 +156,18 @@ public static class ConfigManager
                 ProcessBomForAssemblies = true,
                 IncludeCustomProperties = true,
                 ValidateFilesExist = true,
-                BatchProcessingTimeout = 30000
+                BatchProcessingTimeout = 30000,
+                PeriodicCleanupInterval = 10,
+                CleanupDelayMs = 500,
+                DocumentCloseDelayMs = 200
+            },
+            SolidWorks = new SolidWorksSettings
+            {
+                HideUserInterface = true,
+                DisableUserControl = true,
+                UseReadOnlyMode = true,
+                LoadHiddenComponents = false,
+                LoadExternalReferencesInMemory = true
             }
         };
     }

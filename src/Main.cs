@@ -1,34 +1,34 @@
 using System;
 using SolidWorks.Interop.sldworks;
+using SolidWorks.Interop.swconst;
 
 public class MainClass
 {
     public static void Main(string[] args)
     {
         // Load config and initialize logger
-        var config = ConfigManager.LoadConfig();
+        var config = ConfigManager.LoadConfigFromJSON();
         Logger.Initialize(config);
+        Logger.WriteAndLogUserMessage("SolidWorks Metadata Reader");
         Logger.LogRuntime("Application starting", "Main");
-        
-        Console.WriteLine("SolidWorks Metadata Reader");
-        Console.WriteLine("==========================");
-        Console.WriteLine("Enter file paths to read metadata, or type 'exit' to quit.\n");
 
         SldWorks? swApp = null;
         try
         {
-            Console.WriteLine("Initializing SolidWorks connection...");
             Logger.LogRuntime("Initializing SolidWorks connection", "Main");
             swApp = SWMetadataReader.CreateSolidWorksInstance();
-            swApp.Visible = false;
-            Console.WriteLine("SolidWorks connection established\n");
-            Logger.LogInfo("SolidWorks connection established", "Main");
+            
+            // Performance optimizations - disable UI updates and interactions
+            swApp.Visible = false;                           // Hide SolidWorks UI window
+            swApp.UserControl = false;                       // Prevent user interaction during processing
+            
+            Logger.WriteAndLogUserMessage("SolidWorks connection established with performance optimizations", "Main");
 
             CommandInterface.RunInteractiveLoop(swApp);
+
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Fatal error: {ex.Message}");
             Logger.LogException(ex, "Main - Fatal error");
         }
         finally
@@ -38,7 +38,6 @@ public class MainClass
                 Logger.LogRuntime("Cleaning up SolidWorks connection", "Main");
                 SWMetadataReader.CleanupSolidWorks(swApp);
             }
-            Console.WriteLine("\nApplication closed. Press any key to exit...");
             Logger.LogRuntime("Application closed", "Main");
             Console.ReadKey();
         }

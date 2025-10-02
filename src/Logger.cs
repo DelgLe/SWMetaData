@@ -49,10 +49,10 @@ public static class Logger
             _isInitialized = true;
 
             // Write initial log entry
-            LogInfo("Logger initialized", $"Log file: {_logFilePath}");
+            LogRuntime("Logger initialized", $"Log file: {_logFilePath}");
             if (config?.LogDirectory != null)
             {
-                LogInfo("Log directory loaded from config", config.LogDirectory);
+                LogRuntime("Log directory loaded from config", config.LogDirectory);
             }
         }
         catch (Exception ex)
@@ -68,6 +68,14 @@ public static class Logger
     public static void LogInfo(string message, string? details = null)
     {
         WriteLog("INFO", message, details);
+    }
+
+        /// <summary>
+    /// Log an information message
+    /// </summary>
+    public static void WriteAndLogUserMessage(string message, string? details = null)
+    {
+        WriteLog("INFO", message, details, true, false);
     }
 
     /// <summary>
@@ -96,7 +104,7 @@ public static class Logger
         {
             message += $" [{context}]";
         }
-        WriteLog("RUNTIME", message, details);
+        WriteLog("INFO", message, details, false); // Silent log (file only)
     }
 
     /// <summary>
@@ -107,10 +115,6 @@ public static class Logger
         var sb = new StringBuilder();
         sb.Append($"DOC: {operation}");
         
-        if (!string.IsNullOrEmpty(filePath))
-        {
-            sb.Append($" - {Path.GetFileName(filePath)}");
-        }
         
         if (!string.IsNullOrEmpty(documentType))
         {
@@ -123,7 +127,7 @@ public static class Logger
             fullDetails = string.IsNullOrEmpty(details) ? $"Path: {filePath}" : $"Path: {filePath} {details}";
         }
 
-        WriteLog("DOCUMENT", sb.ToString(), fullDetails);
+        WriteLog("INFO", sb.ToString(), fullDetails);
     }
 
     /// <summary>
@@ -254,34 +258,44 @@ public static class Logger
     /// <summary>
     /// Write a log entry to file and console
     /// </summary>
-    private static void WriteLog(string level, string message, string? details = null)
+    /// <param name="level">Log level (INFO, WARN, ERROR, etc.)</param>
+    /// <param name="message">Main log message</param>
+    /// <param name="details">Optional detailed information</param>
+    /// <param name="includeConsole">If true, only writes to file (no console output)</param>
+    private static void WriteLog(string level, string message, string? details = null, bool includeConsole = true, bool includeTimestamp = true)
     {
         try
         {
             lock (_lockObject)
             {
                 string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
-                var sb = new StringBuilder();
-                
-                sb.AppendLine($"[{timestamp}] [{level}] {message}");
-                if (!string.IsNullOrEmpty(details))
-                {
-                    // Indent details for better readability
-                    string[] lines = details.Split('\n');
-                    foreach (string line in lines)
-                    {
-                        sb.AppendLine($"    {line}");
-                    }
-                }
-                string formattedOutput = sb.ToString();
+                var log_sb = new StringBuilder();
+                var messsage_sb = new StringBuilder();
 
-                // Write to console (always, regardless of initialization status)
-                Console.Write(formattedOutput);
+                log_sb.AppendLine($"[{timestamp}] [{level}] {message}");
+                messsage_sb.AppendLine($"{message}");
+
+                string formattedOutput = ""; 
+
+                if (includeTimestamp)
+                {
+                    formattedOutput = log_sb.ToString();
+                }
+                else
+                {
+                    formattedOutput = messsage_sb.ToString();
+                }
+
+                // Write to console (unless silent logging is requested)
+                if (includeConsole)
+                {
+                    Console.Write(formattedOutput);
+                }
 
                 // Write to file (only if initialized)
                 if (_isInitialized)
                 {
-                    File.AppendAllText(_logFilePath, formattedOutput, Encoding.UTF8);
+                    File.AppendAllText(_logFilePath, log_sb.ToString(), Encoding.UTF8);
                 }
             }
         }

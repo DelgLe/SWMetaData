@@ -5,6 +5,9 @@ using SolidWorks.Interop.swconst;
 public static class SWMetadataReader
 {
     private static readonly string[] ValidExtensions = { ".sldprt", ".sldasm", ".slddrw" };
+    
+    // Files that should be excluded from processing (cause hanging or are not needed for metadata)
+    private static readonly string[] ExcludedExtensions = { ".sldftp", ".sldlfp", ".slddrt", ".sldmat", ".sldclr" };
 
     public static Dictionary<string, string> ReadMetadata(SldWorks swApp, string filePath)
     {
@@ -145,6 +148,11 @@ public static class SWMetadataReader
             throw new FileNotFoundException($"File not found: {filePath}");
 
         string extension = Path.GetExtension(filePath).ToLowerInvariant();
+        
+        // Check if file should be excluded (prevents hanging)
+        if (Array.IndexOf(ExcludedExtensions, extension) != -1)
+            throw new ArgumentException($"File type excluded from processing: {extension}. Excluded types: {string.Join(", ", ExcludedExtensions)}");
+            
         if (Array.IndexOf(ValidExtensions, extension) == -1)
             throw new ArgumentException($"Invalid file type. Supported types: {string.Join(", ", ValidExtensions)}");
     }
@@ -156,8 +164,25 @@ public static class SWMetadataReader
 
         Logger.LogDocument($"Attempting to open {docType}: {Path.GetFileName(filePath)}", filePath);
 
-        ModelDoc2 swModel = swApp.OpenDoc6(filePath, (int)docType,
-            (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings);
+        // Use optimized opening options for faster processing and prevent feature template loading
+        var openOptions = (int)swOpenDocOptions_e.swOpenDocOptions_Silent |
+                         (int)swOpenDocOptions_e.swOpenDocOptions_ReadOnly |
+                         (int)swOpenDocOptions_e.swOpenDocOptions_DontLoadHiddenComponents |
+                         (int)swOpenDocOptions_e.swOpenDocOptions_LoadExternalReferencesInMemory;
+
+        // For parts, prevent auto-loading parent assemblies and feature templates which cause hanging
+        if (docType == swDocumentTypes_e.swDocPART)
+        {
+            openOptions |= (int)swOpenDocOptions_e.swOpenDocOptions_AutoMissingConfig;
+        }
+        
+        // For assemblies, be extra careful about external references
+        if (docType == swDocumentTypes_e.swDocASSEMBLY)
+        {
+            openOptions |= (int)swOpenDocOptions_e.swOpenDocOptions_AutoMissingConfig;
+        }
+
+        ModelDoc2 swModel = swApp.OpenDoc6(filePath, (int)docType, openOptions, "", ref errors, ref warnings);
 
         if (swModel == null)
         {
@@ -176,11 +201,6 @@ public static class SWMetadataReader
                 
                 // Additional cleanup - sometimes SolidWorks needs a moment
                 System.Threading.Thread.Sleep(500);
-                
-                // Force garbage collection to help with COM cleanup
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-                GC.Collect();
                 
                 Logger.LogInfo("Cleanup completed for failed document open", Path.GetFileName(filePath));
             }
@@ -342,10 +362,7 @@ public static class SWMetadataReader
             // Always release COM object regardless of close success
             Marshal.ReleaseComObject(swModel);
             
-            // Additional cleanup - force garbage collection to help release COM resources
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            GC.Collect();
+            // Note: GC calls moved to periodic cleanup in batch processing for better performance
             
             if (!docClosed)
             {
@@ -378,5 +395,46 @@ public static class SWMetadataReader
             ".slddrw" => swDocumentTypes_e.swDocDRAWING,
             _ => throw new ArgumentException($"Unsupported file extension: {extension}")
         };
+    }
+
+    /// <summary>
+    /// Check if a file should be excluded from processing (prevents hanging documents)
+    /// </summary>
+    /// <param name="filePath">Path to the file to check</param>
+    /// <returns>True if file should be excluded, false if it can be processed</returns>
+    public static bool IsFileExcluded(string filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath)) return true;
+        
+        string extension = Path.GetExtension(filePath).ToLowerInvariant();
+        return Array.IndexOf(ExcludedExtensions, extension) != -1;
+    }
+    
+    /// <summary>
+    /// Get list of excluded file extensions for reference
+    /// </summary>
+    /// <returns>Array of excluded extensions</returns>
+    public static string[] GetExcludedExtensions()
+    {
+        return (string[])ExcludedExtensions.Clone();
+    }
+    
+    /// <summary>
+    /// Perform periodic garbage collection for better performance during batch processing
+    /// Call this every 10-15 processed files instead of after each file
+    /// </summary>
+    public static void PeriodicCleanup(int processedCount, string context = "")
+    {
+        if (processedCount % 10 == 0 && processedCount > 0)
+        {
+            Logger.LogInfo($"Performing periodic cleanup after {processedCount} files", context);
+            
+            // Force garbage collection to help with COM cleanup
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            
+            Logger.LogInfo($"Periodic cleanup completed", context);
+        }
     }
 }
