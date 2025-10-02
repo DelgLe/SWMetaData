@@ -2,29 +2,23 @@
 using SolidWorks.Interop.sldworks;
 using SolidWorks.Interop.swconst;
 
-public class TargetFileProcessor
+public class TargetFileProcessor(AppConfig config)
 {
-    private readonly string _databasePath;
-    private readonly AppConfig? _config;
+    private readonly AppConfig _config = config ?? throw new ArgumentNullException(nameof(config));
 
-    public TargetFileProcessor(string databasePath, AppConfig? config)
-    {
-        if (string.IsNullOrWhiteSpace(databasePath))
-            throw new ArgumentException("Database path cannot be null or empty", nameof(databasePath));
-
-        _databasePath = databasePath;
-        _config = config;
-    }
+    private string DatabasePath => !string.IsNullOrWhiteSpace(_config.DatabasePath)
+        ? _config.DatabasePath!
+        : throw new InvalidOperationException("Database path is not configured.");
 
     public List<TargetFileInfo> GetAllTargetFiles()
     {
-        using var dbManager = new DatabaseGateway(_databasePath);
+        using var dbManager = new DatabaseGateway(DatabasePath);
         return dbManager.GetTargetFiles();
     }
 
     public List<TargetFileInfo> GetValidTargetFiles()
     {
-        using var dbManager = new DatabaseGateway(_databasePath);
+        using var dbManager = new DatabaseGateway(DatabasePath);
         return dbManager.GetValidTargetFiles();
     }
 
@@ -47,7 +41,7 @@ public class TargetFileProcessor
             FileCount = 1
         };
 
-        using var dbManager = new DatabaseGateway(_databasePath);
+    using var dbManager = new DatabaseGateway(DatabasePath);
         dbManager.AddTargetFile(targetFile);
 
         return targetFile;
@@ -55,7 +49,7 @@ public class TargetFileProcessor
 
     public bool RemoveTargetFile(int targetId)
     {
-        using var dbManager = new DatabaseGateway(_databasePath);
+    using var dbManager = new DatabaseGateway(DatabasePath);
         var existingFiles = dbManager.GetTargetFiles();
         bool exists = existingFiles.Exists(t => t.TargetID == targetId);
 
@@ -87,7 +81,7 @@ public class TargetFileProcessor
         };
     }
 
-    public BatchProcessingResult ProcessFiles(
+    public BatchProcessingResult ProcessAllTargetFiles(
         SldWorks swApp,
         IReadOnlyList<TargetFileInfo> targetFiles,
         Action<string>? progressWriter = null)
@@ -103,9 +97,9 @@ public class TargetFileProcessor
         int errors = 0;
         int excluded = 0;
         int total = targetFiles.Count;
-        int cleanupInterval = Math.Max(1, _config?.PeriodicCleanupInterval ?? 10);
+    int cleanupInterval = Math.Max(1, _config.PeriodicCleanupInterval);
 
-        using var dbManager = new DatabaseGateway(_databasePath);
+    using var dbManager = new DatabaseGateway(DatabasePath);
 
         for (int index = 0; index < targetFiles.Count; index++)
         {
@@ -170,9 +164,58 @@ public class TargetFileProcessor
         };
     }
 
+    public void ProcessAllTargetFiles(SldWorks swApp)
+    {
+        if (swApp == null)
+            throw new ArgumentNullException(nameof(swApp));
+
+        try
+        {
+            Logger.LogRuntime("Batch processing started", "ProcessAllTargetFiles");
+            var validFiles = GetValidTargetFiles();
+
+            if (validFiles.Count == 0)
+            {
+                Logger.LogInfo("No valid target files found to process", "ProcessAllTargetFiles");
+                return;
+            }
+
+            Logger.LogInfo($"Found {validFiles.Count} valid target files to process", "ProcessAllTargetFiles");
+            Console.Write("Continue with batch processing? (y/n): ");
+
+            if (Console.ReadLine()?.Trim().ToLower() != "y")
+            {
+                Logger.LogInfo("Batch processing cancelled by user", "ProcessAllTargetFiles");
+                return;
+            }
+
+            var result = ProcessAllTargetFiles(swApp, validFiles, message => Console.WriteLine(message));
+
+            Logger.WriteAndLogUserMessage($"\n=== Batch Processing Complete ===");
+            Logger.WriteAndLogUserMessage($"Successfully processed: {result.ProcessedFiles}");
+            Logger.WriteAndLogUserMessage($"Errors (including exclusions): {result.ErrorCount}");
+            if (result.ExcludedCount > 0)
+            {
+                Logger.WriteAndLogUserMessage($"Excluded files: {result.ExcludedCount}");
+            }
+            Logger.WriteAndLogUserMessage($"Total: {result.TotalFiles}");
+
+            Logger.LogInfo(
+                $"Batch processing complete - Processed: {result.ProcessedFiles}, Errors: {result.ErrorCount}, Excluded: {result.ExcludedCount}, Total: {result.TotalFiles}",
+                "ProcessAllTargetFiles");
+
+            var excludedTypes = SWMetadataReader.GetExcludedExtensions();
+            Logger.LogInfo($"Excluded file types: {string.Join(", ", excludedTypes)}", "ProcessAllTargetFiles");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogException(ex, "ProcessAllTargetFiles - Batch processing failed");
+        }
+    }
+
     private bool ShouldProcessBom(Dictionary<string, string> metadata)
     {
-        if (!(_config?.ProcessBomForAssemblies ?? true))
+        if (!_config.ProcessBomForAssemblies)
             return false;
 
         if (!metadata.TryGetValue("DocumentType", out var docType))

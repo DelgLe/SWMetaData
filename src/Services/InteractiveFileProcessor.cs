@@ -5,14 +5,14 @@ using System.Linq;
 using SolidWorks.Interop.sldworks;
 using SolidWorks.Interop.swconst;
 
-public class InteractiveFileProcessor
+public class InteractiveFileProcessor(AppConfig config)
 {
-    private readonly AppConfig? _config;
+    private readonly AppConfig _config = config ?? throw new ArgumentNullException(nameof(config));
 
-    public InteractiveFileProcessor(AppConfig? config)
-    {
-        _config = config;
-    }
+    private string DatabasePath => !string.IsNullOrWhiteSpace(_config.DatabasePath)
+    ? _config.DatabasePath!
+    : throw new InvalidOperationException("Database path is not configured.");
+
 
     public void ProcessSingleFile(SldWorks swApp)
     {
@@ -45,9 +45,9 @@ public class InteractiveFileProcessor
         }
     }
 
-    public void ProcessFileWithDatabase(SldWorks swApp, string databasePath)
+    public void ProcessFileWithDatabase(SldWorks swApp)
     {
-        if (string.IsNullOrWhiteSpace(databasePath))
+        if (string.IsNullOrWhiteSpace(DatabasePath))
         {
             Logger.LogWarning("No database configured. Please setup database first (option 2).");
             return;
@@ -69,7 +69,7 @@ public class InteractiveFileProcessor
 
             DisplayMetadata(filePath, metadata);
 
-            using var dbManager = new DatabaseGateway(databasePath);
+            using var dbManager = new DatabaseGateway(DatabasePath);
             Console.WriteLine("Saving to database...");
             long documentId = dbManager.InsertDocumentMetadata(metadata);
             Console.WriteLine($"Document saved with ID: {documentId}");

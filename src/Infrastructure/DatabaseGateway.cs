@@ -14,113 +14,41 @@ public class DatabaseGateway : IDisposable
             throw new ArgumentException("Database path cannot be null or empty", nameof(databasePath));
 
         _connectionString = $"Data Source={databasePath};Version=3;";
-        InitializeDatabase();
+        InitializeDatabaseConnection();
     }
 
     /// <summary>
-    /// Initialize the database and create tables if they don't exist
+    /// Initialize the database connection (assumes database and tables already exist)
+    /// Use DatabaseSetupProcessor.CreateDatabaseWithSchema() for new database creation
     /// </summary>
-    private void InitializeDatabase()
+    private void InitializeDatabaseConnection()
     {
         try
         {
             _connection = new SQLiteConnection(_connectionString);
             _connection.Open();
             
-            // Enable foreign key constraints
+            // Apply basic runtime optimizations
             using var enableFkCommand = new SQLiteCommand("PRAGMA foreign_keys = ON;", _connection);
             enableFkCommand.ExecuteNonQuery();
             
-            // Optimize database performance
             using var cacheSizeCommand = new SQLiteCommand("PRAGMA cache_size = 10000;", _connection);
             cacheSizeCommand.ExecuteNonQuery();
             
             using var pageSizeCommand = new SQLiteCommand("PRAGMA page_size = 4096;", _connection);
             pageSizeCommand.ExecuteNonQuery();
             
-            CreateTables();
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException($"Failed to initialize database: {ex.Message}", ex);
+            _connection?.Close();
+            _connection?.Dispose();
+            _connection = null;
+            throw new InvalidOperationException($"Failed to initialize database connection: {ex.Message}", ex);
         }
     }
 
-    /// <summary>
-    /// Create all necessary tables for storing SolidWorks data
-    /// </summary>
-    private void CreateTables()
-    {
-        var commands = new[]
-        {
-            // Assembly/Part metadata table
-            @"CREATE TABLE IF NOT EXISTS sw_documents (
-                DocID INTEGER PRIMARY KEY AUTOINCREMENT,
-                file_path TEXT NOT NULL UNIQUE,
-                file_name TEXT NOT NULL,
-                document_type TEXT NOT NULL,
-                file_size INTEGER,
-                last_modified DATETIME,
-                created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (file_path) REFERENCES file_searchid(file_path) ON DELETE CASCADE
-            )",
 
-            // Custom properties table
-            @"CREATE TABLE IF NOT EXISTS sw_custom_properties (
-                property_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                DocID INTEGER NOT NULL,
-                property_name TEXT NOT NULL,
-                property_value TEXT,
-                FOREIGN KEY (DocID) REFERENCES sw_documents (DocID) ON DELETE CASCADE,
-                UNIQUE(DocID, property_name)
-            )",
-
-            // BOM items table
-            @"CREATE TABLE IF NOT EXISTS sw_bom_items (
-                bom_item_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                Parent_DocID INTEGER NOT NULL,
-                component_name TEXT NOT NULL,
-                file_name TEXT NOT NULL,
-                file_path TEXT NOT NULL,
-                configuration TEXT,
-                quantity INTEGER DEFAULT 1,
-                level INTEGER DEFAULT 0,
-                is_suppressed BOOLEAN DEFAULT 0,
-                suppression_state TEXT,
-                created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (Parent_DocID) REFERENCES sw_documents (DocID) ON DELETE CASCADE
-            )",
-
-            // Configurations table
-            @"CREATE TABLE IF NOT EXISTS sw_configurations (
-                configuration_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                DocID INTEGER NOT NULL,
-                configuration_name TEXT NOT NULL,
-                FOREIGN KEY (DocID) REFERENCES sw_documents (DocID) ON DELETE CASCADE,
-                UNIQUE(DocID, configuration_name)
-            )",
-
-            // Materials table
-            @"CREATE TABLE IF NOT EXISTS sw_materials (
-                DocID INTEGER PRIMARY KEY ,
-                material_name TEXT NOT NULL,
-                FOREIGN KEY (DocID) REFERENCES sw_documents (DocID) ON DELETE CASCADE
-            )",
-
-            // Create indexes for better performance
-            @"CREATE INDEX IF NOT EXISTS idx_documents_filepath ON sw_documents(file_path)",
-            @"CREATE INDEX IF NOT EXISTS idx_custom_props_docid ON sw_custom_properties(DocID)",
-            @"CREATE INDEX IF NOT EXISTS idx_Parent_DocID ON sw_bom_items(Parent_DocID)",
-            @"CREATE INDEX IF NOT EXISTS idx_configurations_docid ON sw_configurations(DocID)",
-            @"CREATE INDEX IF NOT EXISTS idx_materials_docid ON sw_materials(DocID)"
-        };
-
-        foreach (string commandText in commands)
-        {
-            using var command = new SQLiteCommand(commandText, _connection);
-            command.ExecuteNonQuery();
-        }
-    }
 
     /// <summary>
     /// Insert document metadata into the database
@@ -135,6 +63,9 @@ public class DatabaseGateway : IDisposable
         if (!metadata.ContainsKey("FilePath"))
             throw new ArgumentException("Metadata must contain 'FilePath' key", nameof(metadata));
 
+        if (_connection == null)
+            throw new InvalidOperationException("Database connection is not initialized");
+            
         using var transaction = _connection.BeginTransaction();
         try
         {
@@ -184,6 +115,9 @@ public class DatabaseGateway : IDisposable
         if (assemblyId == 0)
             throw new InvalidOperationException($"Assembly document not found in database: {assemblyFilePath}");
 
+        if (_connection == null)
+            throw new InvalidOperationException("Database connection is not initialized");
+            
         using var transaction = _connection.BeginTransaction();
         try
         {
@@ -323,15 +257,15 @@ public class DatabaseGateway : IDisposable
             }
 
             // Add custom property if present
-            string propName = reader["property_name"].ToString();
-            string propValue = reader["property_value"].ToString();
+            string? propName = reader["property_name"].ToString();
+            string? propValue = reader["property_value"].ToString();
             if (!string.IsNullOrEmpty(propName))
             {
                 metadata[propName] = propValue ?? string.Empty;
             }
         }
 
-        return documentFound ? metadata : null;
+        return documentFound ? metadata : null!;
     }
 
     #region Target Files Management
