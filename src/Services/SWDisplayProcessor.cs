@@ -1,17 +1,17 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using SolidWorks.Interop.sldworks;
-using SolidWorks.Interop.swconst;
 
-public class InteractiveFileProcessor(AppConfig config)
+public class SWDisplayProcessor
 {
-    private readonly AppConfig _config = config ?? throw new ArgumentNullException(nameof(config));
+    private readonly AppConfig _config;
+
+    public SWDisplayProcessor(AppConfig config)
+    {
+        _config = config ?? throw new ArgumentNullException(nameof(config));
+    }
 
     private string DatabasePath => !string.IsNullOrWhiteSpace(_config.DatabasePath)
-    ? _config.DatabasePath!
-    : throw new InvalidOperationException("Database path is not configured.");
+        ? _config.DatabasePath!
+        : throw new InvalidOperationException("Database path is not configured.");
 
 
     public void ProcessSingleFile(SldWorks swApp)
@@ -30,7 +30,7 @@ public class InteractiveFileProcessor(AppConfig config)
             var metadata = SWMetadataReader.ReadMetadata(swApp, filePath);
             DisplayMetadata(filePath, metadata);
 
-            if (ShouldOfferBom(metadata))
+            if (!_config.ProcessBomForAssemblies)
             {
                 OfferBomOption(swApp, filePath);
             }
@@ -74,7 +74,7 @@ public class InteractiveFileProcessor(AppConfig config)
             long documentId = dbManager.InsertDocumentMetadata(metadata);
             Console.WriteLine($"Document saved with ID: {documentId}");
 
-            if (ShouldProcessBom(metadata))
+            if (!_config.ProcessBomForAssemblies)
             {
                 ProcessAssemblyBom(swApp, dbManager, filePath);
             }
@@ -91,43 +91,26 @@ public class InteractiveFileProcessor(AppConfig config)
         }
     }
 
-    private bool ShouldOfferBom(Dictionary<string, string> metadata)
-    {
-        if (!metadata.TryGetValue("DocumentType", out var docType))
-        {
-            return false;
-        }
-
-        if (!docType.Contains("ASSEMBLY", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        return _config?.ProcessBomForAssemblies ?? true;
-    }
-
-    private bool ShouldProcessBom(Dictionary<string, string> metadata)
-    {
-        return ShouldOfferBom(metadata);
-    }
-
     private void OfferBomOption(SldWorks swApp, string filePath)
     {
         try
         {
-            Console.WriteLine("\n--- Assembly BOM Options ---");
             Console.WriteLine("Would you like to view the Bill of Materials (BOM) for this assembly?");
-            Console.WriteLine("1. View unsuppressed components only (BOM)");
-            Console.WriteLine("2. View all components (including suppressed)");
-            Console.WriteLine("3. Skip BOM");
-            Console.Write("Enter your choice (1-3): ");
 
-            string choice = Console.ReadLine()?.Trim() ?? string.Empty;
+            var menu = MenuFactoryExtensions.CreateStandardMenu("Assembly BOM Options")
+                .AddOption("1", "View unsuppressed components only (BOM)", () =>
+                {
+                    DisplayBom(swApp, filePath, includeSuppressed: false);
+                    return false;
+                })
+                .AddOption("2", "View all components (including suppressed)", () =>
+                {
+                    DisplayBom(swApp, filePath, includeSuppressed: true);
+                    return false;
+                })
+                .AddOption("3", "Skip BOM", () => false);
 
-            if (choice == "1" || choice == "2")
-            {
-                DisplayBom(swApp, filePath, choice == "2");
-            }
+            menu.RunMenu();
         }
         catch (Exception ex)
         {
@@ -138,113 +121,42 @@ public class InteractiveFileProcessor(AppConfig config)
     private void ProcessAssemblyBom(SldWorks swApp, DatabaseGateway dbManager, string filePath)
     {
         Console.WriteLine("\nAssembly detected. Processing BOM...");
+        var bomItems = SWMetadataReader.GetBomItems(swApp, filePath, includeSuppressed: false, message => Console.WriteLine(message));
 
-        ModelDoc2? swModel = null;
-        try
+        if (bomItems.Count == 0)
         {
-            int errors = 0;
-            int warnings = 0;
-
-            var documentType = SWDocumentManager.GetDocumentType(filePath);
-            Logger.LogInfo($"Opening {documentType} for BOM processing: {Path.GetFileName(filePath)}");
-
-            swModel = swApp.OpenDoc6(
-                filePath,
-                (int)documentType,
-                (int)swOpenDocOptions_e.swOpenDocOptions_Silent,
-                string.Empty,
-                ref errors,
-                ref warnings);
-
-            if (swModel != null)
-            {
-                var bomItems = SWAssemblyTraverser.GetUnsuppressedComponents(swModel, true);
-                if (bomItems.Count > 0)
-                {
-                    dbManager.InsertBomItems(filePath, bomItems);
-                    Logger.LogInfo($"Saved {bomItems.Count} BOM items to database");
-
-                    Console.Write("Display BOM? (y/n): ");
-                    if (Console.ReadLine()?.Trim().ToLower() == "y")
-                    {
-                        DisplayBomFromList(bomItems, "Bill of Materials (from database)");
-                    }
-                }
-                else
-                {
-                    Logger.LogWarning("No BOM items found in assembly");
-                }
-            }
-            else
-            {
-                Console.WriteLine($"Could not re-open document for BOM processing (Errors: {errors}, Warnings: {warnings})");
-
-                if (documentType == swDocumentTypes_e.swDocASSEMBLY)
-                {
-                    SWDocumentManager.ForceCleanupHangingDocuments(swApp, "Assembly failed to open - ");
-                }
-            }
+            Logger.LogWarning("No BOM items found in assembly");
+            return;
         }
-        finally
+
+        dbManager.InsertBomItems(filePath, bomItems);
+        Logger.LogInfo($"Saved {bomItems.Count} BOM items to database");
+
+        Console.Write("Display BOM? (y/n): ");
+        if (Console.ReadLine()?.Trim().ToLower() == "y")
         {
-            SWDocumentManager.CloseDocumentSafely(swApp, swModel);
+            DisplayBomFromList(bomItems, "Bill of Materials (from database)");
         }
     }
 
     private void DisplayBom(SldWorks swApp, string filePath, bool includeSuppressed)
     {
-        ModelDoc2? swModel = null;
         try
         {
-            int errors = 0;
-            int warnings = 0;
-
-            var docType = SWDocumentManager.GetDocumentType(filePath);
-            Logger.WriteAndLogUserMessage($"Opening {docType} for BOM display: {Path.GetFileName(filePath)}");
-
-            swModel = swApp.OpenDoc6(
-                filePath,
-                (int)docType,
-                (int)swOpenDocOptions_e.swOpenDocOptions_Silent,
-                string.Empty,
-                ref errors,
-                ref warnings);
-
-            if (swModel == null)
+            var bomItems = SWMetadataReader.GetBomItems(swApp, filePath, includeSuppressed, message =>
             {
-                Console.WriteLine($"Error: Could not open assembly for BOM generation (Errors: {errors}, Warnings: {warnings}).");
+                Logger.WriteAndLogUserMessage(message.TrimStart());
+            });
 
-                if (docType == swDocumentTypes_e.swDocASSEMBLY)
-                {
-                    SWDocumentManager.ForceCleanupHangingDocuments(swApp, "Assembly failed to open - ");
-                }
-
-                return;
-            }
-
-            List<BomItem> bomItems;
-            string title;
-
-            if (includeSuppressed)
-            {
-                bomItems = SWAssemblyTraverser.GetAllComponents(swModel, true);
-                title = "Complete Component List (Including Suppressed)";
-            }
-            else
-            {
-                bomItems = SWAssemblyTraverser.GetUnsuppressedComponents(swModel, true);
-                title = "Bill of Materials (Unsuppressed Components Only)";
-            }
+            string title = includeSuppressed
+                ? "Complete Component List (Including Suppressed)"
+                : "Bill of Materials (Unsuppressed Components Only)";
 
             DisplayBomFromList(bomItems, title);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Error generating BOM: {ex.Message}");
-        }
-        finally
-        {
-            SWDocumentManager.CloseDocumentSafely(swApp, swModel);
         }
     }
 

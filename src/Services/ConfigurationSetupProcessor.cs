@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 
-public class ConfigurationProcessor(AppConfig config, Action<string?> onDatabasePathChanged)
+public class ConfigurationSetupProcessor(AppConfig config, Action<string?> onDatabasePathChanged)
 {
     private AppConfig _config = config ?? throw new ArgumentNullException(nameof(config));
     private Action<string?> _onDatabasePathChanged = onDatabasePathChanged ?? throw new ArgumentNullException(nameof(onDatabasePathChanged));

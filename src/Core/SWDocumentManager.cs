@@ -1,9 +1,6 @@
-using System;
-using System.Threading;
 using SolidWorks.Interop.sldworks;
 using SolidWorks.Interop.swconst;
 using System.Runtime.InteropServices;
-using System.IO;
 
 /// <summary>
 /// Utility class for managing SolidWorks document lifecycle and cleanup operations

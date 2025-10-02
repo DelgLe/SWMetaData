@@ -10,8 +10,8 @@ public class ProcessorContext
     private string? _databasePath;
 
     private TargetFileProcessor? _targetFileProcessor;
-    private InteractiveFileProcessor? _interactiveFileProcessor;
-    private ConfigurationProcessor? _configurationProcessor;
+    private SWDisplayProcessor? _interactiveFileProcessor;
+    private ConfigurationSetupProcessor? _configurationProcessor;
     private DatabaseSetupProcessor? _databaseSetupProcessor;
 
     /// <summary>
@@ -33,7 +33,7 @@ public class ProcessorContext
     /// <summary>
     /// Exposes the configuration processor (always available after initialization).
     /// </summary>
-    public ConfigurationProcessor ConfigurationProcessor =>
+    public ConfigurationSetupProcessor ConfigurationProcessor =>
         _configurationProcessor ?? throw new InvalidOperationException("ConfigurationProcessor is not initialized.");
 
 
@@ -46,7 +46,7 @@ public class ProcessorContext
     /// <summary>
     /// Exposes the interactive file processor (always available after initialization).
     /// </summary>
-    public InteractiveFileProcessor InteractiveFileProcessor =>
+    public SWDisplayProcessor InteractiveFileProcessor =>
         _interactiveFileProcessor ?? throw new InvalidOperationException("InteractiveFileProcessor is not initialized.");
 
     /// <summary>
@@ -125,12 +125,12 @@ public class ProcessorContext
 
     private void RefreshInteractiveProcessor()
     {
-        _interactiveFileProcessor = new InteractiveFileProcessor(Config);
+        _interactiveFileProcessor = new SWDisplayProcessor(Config);
     }
 
     private void RefreshConfigurationProcessor()
     {
-        _configurationProcessor = new ConfigurationProcessor(Config, HandleDatabasePathChanged);
+        _configurationProcessor = new ConfigurationSetupProcessor(Config, HandleDatabasePathChanged);
     }
 
     private void RefreshDatabaseSetupProcessor()

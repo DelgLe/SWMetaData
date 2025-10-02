@@ -8,9 +8,9 @@ using SolidWorks.Interop.swconst;
 public static class CommandInterface
 {
     private static readonly ProcessorContext _processors = new();
-    private static InteractiveFileProcessor InteractiveFiles => _processors.InteractiveFileProcessor;
+    private static SWDisplayProcessor InteractiveFiles => _processors.InteractiveFileProcessor;
     private static DatabaseSetupProcessor DatabaseSetup => _processors.DatabaseSetupProcessor;
-    private static ConfigurationProcessor Configuration => _processors.ConfigurationProcessor;
+    private static ConfigurationSetupProcessor ConfigurationSetup => _processors.ConfigurationProcessor;
     private static TargetFileProcessor TargetFiles => _processors.TargetFileProcessor;
 
     /// <summary>
@@ -72,50 +72,22 @@ public static class CommandInterface
 
     public static void DisplayBom(SldWorks swApp, string filePath, bool includeSupressed)
     {
-        ModelDoc2? swModel = null;
         try
         {
-            int errors = 0, warnings = 0;
-            swDocumentTypes_e docType = SWDocumentManager.GetDocumentType(filePath);
-            Logger.WriteAndLogUserMessage($"Opening {docType} for BOM display: {Path.GetFileName(filePath)}");
-
-            swModel = swApp.OpenDoc6(filePath, (int)docType,
-                (int)swOpenDocOptions_e.swOpenDocOptions_Silent, string.Empty, ref errors, ref warnings);
-
-            if (swModel == null)
+            var bomItems = SWMetadataReader.GetBomItems(swApp, filePath, includeSupressed, message =>
             {
-                Console.WriteLine($"Error: Could not open assembly for BOM generation (Errors: {errors}, Warnings: {warnings}).");
+                Logger.WriteAndLogUserMessage(message.TrimStart());
+            });
 
-                if (docType == swDocumentTypes_e.swDocASSEMBLY)
-                {
-                    SWDocumentManager.ForceCleanupHangingDocuments(swApp, "Assembly failed to open - ");
-                }
-                return;
-            }
-
-            List<BomItem> bomItems;
-            string title;
-
-            if (includeSupressed)
-            {
-                bomItems = SWAssemblyTraverser.GetAllComponents(swModel, true);
-                title = "Complete Component List (Including Suppressed)";
-            }
-            else
-            {
-                bomItems = SWAssemblyTraverser.GetUnsuppressedComponents(swModel, true);
-                title = "Bill of Materials (Unsuppressed Components Only)";
-            }
+            string title = includeSupressed
+                ? "Complete Component List (Including Suppressed)"
+                : "Bill of Materials (Unsuppressed Components Only)";
 
             DisplayBomFromList(bomItems, title);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Error generating BOM: {ex.Message}");
-        }
-        finally
-        {
-            SWDocumentManager.CloseDocumentSafely(swApp, swModel);
         }
     }
 
@@ -169,12 +141,12 @@ public static class CommandInterface
     private static void ManageConfiguration()
     {
         var menu = MenuFactoryExtensions.CreateStandardMenu("Configuration Management")
-            .AddOption("1", "View current configuration", Configuration.ViewCurrentConfiguration)
-            .AddOption("2", "Set database path", Configuration.SetDatabasePath)
-            .AddOption("3", "Create example config file", Configuration.CreateExampleConfigFile)
+            .AddOption("1", "View current configuration", ConfigurationSetup.ViewCurrentConfiguration)
+            .AddOption("2", "Set database path", ConfigurationSetup.SetDatabasePath)
+            .AddOption("3", "Create example config file", ConfigurationSetup.CreateExampleConfigFile)
             .AddOption("4", "Reload configuration from file", () =>
-                Configuration.ReloadConfiguration(_processors.HandleConfigurationReload))
-            .AddOption("5", "Save current configuration", Configuration.SaveCurrentConfiguration)
+                ConfigurationSetup.ReloadConfiguration(_processors.HandleConfigurationReload))
+            .AddOption("5", "Save current configuration", ConfigurationSetup.SaveCurrentConfiguration)
             .AddBackOption("6", "Back to main menu");
 
         menu.RunMenu();

@@ -263,7 +263,69 @@ public static class SWMetadataReader
         }
     }
 
+    public static List<BomItem> GetBomItems(
+        SldWorks swApp,
+        string filePath,
+        bool includeSuppressed,
+        Action<string>? progressWriter = null)
+    {
+        if (swApp == null)
+        {
+            throw new ArgumentNullException(nameof(swApp));
+        }
 
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            throw new ArgumentException("File path cannot be null or empty", nameof(filePath));
+        }
+
+        progressWriter ??= _ => { };
+
+        ModelDoc2? swModel = null;
+        try
+        {
+            int errors = 0;
+            int warnings = 0;
+            var documentType = SWDocumentManager.GetDocumentType(filePath);
+            progressWriter($"  Opening {documentType}: {Path.GetFileName(filePath)}");
+
+            swModel = swApp.OpenDoc6(
+                filePath,
+                (int)documentType,
+                (int)swOpenDocOptions_e.swOpenDocOptions_Silent,
+                string.Empty,
+                ref errors,
+                ref warnings);
+
+            if (swModel == null)
+            {
+                progressWriter($"  Could not open assembly (Errors: {errors}, Warnings: {warnings})");
+
+                if (documentType == swDocumentTypes_e.swDocASSEMBLY)
+                {
+                    SWDocumentManager.ForceCleanupHangingDocuments(swApp, "  Assembly failed to open - ");
+                }
+
+                return new List<BomItem>();
+            }
+
+            var bomItems = includeSuppressed
+                ? SWAssemblyTraverser.GetAllComponents(swModel, true)
+                : SWAssemblyTraverser.GetUnsuppressedComponents(swModel, true);
+
+            return bomItems;
+        }
+        catch (Exception ex)
+        {
+            progressWriter($"  BOM processing error: {ex.Message}");
+            Logger.LogException(ex, $"BomProcessingService.GetBomItems - {filePath}");
+            return new List<BomItem>();
+        }
+        finally
+        {
+            SWDocumentManager.CloseDocumentSafely(swApp, swModel);
+        }
+    }
 
 
 

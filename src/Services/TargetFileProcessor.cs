@@ -1,10 +1,13 @@
 
 using SolidWorks.Interop.sldworks;
-using SolidWorks.Interop.swconst;
 
-public class TargetFileProcessor(AppConfig config)
+public class TargetFileProcessor
 {
-    private readonly AppConfig _config = config ?? throw new ArgumentNullException(nameof(config));
+    private readonly AppConfig _config;
+    public TargetFileProcessor(AppConfig config)
+    {
+        _config = config ?? throw new ArgumentNullException(nameof(config));
+    }
 
     private string DatabasePath => !string.IsNullOrWhiteSpace(_config.DatabasePath)
         ? _config.DatabasePath!
@@ -41,7 +44,7 @@ public class TargetFileProcessor(AppConfig config)
             FileCount = 1
         };
 
-    using var dbManager = new DatabaseGateway(DatabasePath);
+        using var dbManager = new DatabaseGateway(DatabasePath);
         dbManager.AddTargetFile(targetFile);
 
         return targetFile;
@@ -49,7 +52,7 @@ public class TargetFileProcessor(AppConfig config)
 
     public bool RemoveTargetFile(int targetId)
     {
-    using var dbManager = new DatabaseGateway(DatabasePath);
+        using var dbManager = new DatabaseGateway(DatabasePath);
         var existingFiles = dbManager.GetTargetFiles();
         bool exists = existingFiles.Exists(t => t.TargetID == targetId);
 
@@ -97,9 +100,9 @@ public class TargetFileProcessor(AppConfig config)
         int errors = 0;
         int excluded = 0;
         int total = targetFiles.Count;
-    int cleanupInterval = Math.Max(1, _config.PeriodicCleanupInterval);
+        int cleanupInterval = Math.Max(1, _config.PeriodicCleanupInterval);
 
-    using var dbManager = new DatabaseGateway(DatabasePath);
+        using var dbManager = new DatabaseGateway(DatabasePath);
 
         for (int index = 0; index < targetFiles.Count; index++)
         {
@@ -133,9 +136,19 @@ public class TargetFileProcessor(AppConfig config)
 
                 processed++;
 
-                if (ShouldProcessBom(metadata))
+                if (!_config.ProcessBomForAssemblies)
                 {
-                    ProcessAssemblyBom(swApp, dbManager, filePath, progressWriter);
+                    var bomItems = SWMetadataReader.GetBomItems(swApp, filePath, includeSuppressed: false, progressWriter);
+
+                    if (bomItems.Count > 0)
+                    {
+                        dbManager.InsertBomItems(filePath, bomItems);
+                        progressWriter($"  Saved {bomItems.Count} BOM items");
+                    }
+                    else
+                    {
+                        progressWriter("  No BOM items found");
+                    }
                 }
 
                 if (processed % cleanupInterval == 0)
@@ -210,72 +223,6 @@ public class TargetFileProcessor(AppConfig config)
         catch (Exception ex)
         {
             Logger.LogException(ex, "ProcessAllTargetFiles - Batch processing failed");
-        }
-    }
-
-    private bool ShouldProcessBom(Dictionary<string, string> metadata)
-    {
-        if (!_config.ProcessBomForAssemblies)
-            return false;
-
-        if (!metadata.TryGetValue("DocumentType", out var docType))
-            return false;
-
-        return docType.Contains("ASSEMBLY", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private void ProcessAssemblyBom(
-        SldWorks swApp,
-        DatabaseGateway dbManager,
-        string filePath,
-        Action<string> progressWriter)
-    {
-        ModelDoc2? swModel = null;
-        try
-        {
-            int errors = 0, warnings = 0;
-            var documentType = SWDocumentManager.GetDocumentType(filePath);
-            progressWriter($"  Opening {documentType}: {Path.GetFileName(filePath)}");
-
-            swModel = swApp.OpenDoc6(
-                filePath,
-                (int)documentType,
-                (int)swOpenDocOptions_e.swOpenDocOptions_Silent,
-                string.Empty,
-                ref errors,
-                ref warnings);
-
-            if (swModel != null)
-            {
-                var bomItems = SWAssemblyTraverser.GetUnsuppressedComponents(swModel, true);
-                if (bomItems.Count > 0)
-                {
-                    dbManager.InsertBomItems(filePath, bomItems);
-                    progressWriter($"  Saved {bomItems.Count} BOM items");
-                }
-                else
-                {
-                    progressWriter("  No BOM items found");
-                }
-            }
-            else
-            {
-                progressWriter($"  Could not open assembly (Errors: {errors}, Warnings: {warnings})");
-
-                if (documentType == swDocumentTypes_e.swDocASSEMBLY)
-                {
-                    SWDocumentManager.ForceCleanupHangingDocuments(swApp, "  Assembly failed to open - ");
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            progressWriter($"  BOM processing error: {ex.Message}");
-            Logger.LogException(ex, $"ProcessAssemblyBom - {filePath}");
-        }
-        finally
-        {
-            SWDocumentManager.CloseDocumentSafely(swApp, swModel);
         }
     }
 
