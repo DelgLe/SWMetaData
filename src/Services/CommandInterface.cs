@@ -24,6 +24,9 @@ public static class CommandInterface
         Logger.LogRuntime("Application started", "RunInteractiveLoop");
         Logger.LogRuntime("Database path loaded from config", _processors.DatabasePath);
 
+        // Initialize Python scripts
+        PythonScriptRunner.InitializeDefaultScripts();
+
         var mainMenu = new MenuFactory("SolidWorks Metadata Reader")
             .AddOption("1", "Process single file (display only)", () => InteractiveFiles.ProcessSingleFile(swApp))
             .AddOption("2", "Setup/Create database", DatabaseSetup.SetupDatabase)
@@ -31,7 +34,8 @@ public static class CommandInterface
             .AddOption("4", "Manage target files", ManageTargetFiles)
             .AddOption("5", "Process all target files (batch)", () => TargetFiles.ProcessAllTargetFiles(swApp))
             .AddOption("6", "Configuration settings", ManageConfiguration)
-            .AddOption("7", "Exit", () =>
+            .AddOption("7", "Run Python scripts", PythonScriptRunner.ShowPythonScriptsMenu)
+            .AddOption("8", "Exit", () =>
             {
                 Logger.LogRuntime("Application exit requested", "User input");
                 return false;

@@ -1,4 +1,10 @@
 
+
+/// <summary>
+/// Configuration for a Python script to be auto-registered
+/// </summary>
+
+
 /// <summary>
 /// Configuration settings for the SolidWorks Metadata application
 /// </summary>
@@ -8,6 +14,9 @@ public class AppConfig
     public string? DatabasePath { get; set; }
     public bool AutoCreateDatabase { get; set; } = true;
     public string? DefaultTargetFilesPath { get; set; }
+    
+    // Python Integration Settings
+    public List<PythonScript>? PythonScripts { get; set; }
     
     // Logging Settings
     public string? LogDirectory { get; set; }

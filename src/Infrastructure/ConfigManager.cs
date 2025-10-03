@@ -114,6 +114,8 @@ public static class ConfigManager
             AutoCreateDatabase = true,
             DefaultTargetFilesPath = null,
             
+            PythonScripts = new List<PythonScript>(),
+            
             // Logging Settings
             LogDirectory = Path.Combine(Environment.CurrentDirectory, "logs"),
             
